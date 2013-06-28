@@ -1,0 +1,12 @@
+{application, molderl,
+ [
+  {description, "A basic implementation of a MOLDUDP64 server"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { molderl_app, []}},
+  {env, []}
+ ]}.
