@@ -50,10 +50,16 @@ binary_padder(BinaryToPad) ->
     false -> BinaryToPad
   end.
 
-
+%% -------------------------------------------------
+%% Generates a message packet. This takes the stream
+%% name, the next sequence number and a message (or 
+%% list of messages). It returns a completed MOLD64
+%% packet as well as the next sequence number. This
+%% is needed for generating the next message in the
+%% stream.
+%% -------------------------------------------------
 gen_messagepacket(StreamName,NextSeq,Message) when is_list(Message) == false ->
     gen_messagepacket(StreamName,NextSeq,[Message]);
-
 gen_messagepacket(StreamName,NextSeq,Messages) ->
   EncodedMessages = lists:map(fun encode_message/1,Messages),
   io:format("~p~n",[EncodedMessages]),
@@ -65,6 +71,11 @@ gen_messagepacket(StreamName,NextSeq,Messages) ->
   PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
   {NewNextSeq,PacketPayload}.
 
+%% ------------------------------------------------
+%% Takes a message as either a list of a binary and
+%% then adds the length header needed by MOLD64. It
+%% returns the binary encoded message.
+%% ------------------------------------------------
 encode_message(Message) when is_list(Message) == true ->
   encode_message(list_to_binary(Message));
 encode_message(Message) when is_binary(Message) == true ->
