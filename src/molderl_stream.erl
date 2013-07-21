@@ -6,17 +6,18 @@
 -export([init/4]).
 -include("molderl.hrl").
 
--define(PACKET_SIZE,50).
+-define(PACKET_SIZE,1500).
 -define(STATE,State#state).
 
--record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer } ).
+-record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
 
 init(StreamProcessName,StreamName,Destination,DestinationPort) ->
     register(StreamProcessName,self()),
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
-    State = #state{stream_name = MoldStreamName, destination = Destination,sequence_number = 1,socket = Socket,destination_port = DestinationPort, stream_process_name = StreamProcessName, messages = [], message_length = 0, timer = 5000},
-    timer:send_after(5000,send_from_timer),
+    % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
+    {ok,TRef} = timer:send_after(5000,send_from_timer),
+    State = #state{stream_name = MoldStreamName, destination = Destination,sequence_number = 1,socket = Socket,destination_port = DestinationPort, stream_process_name = StreamProcessName, messages = [], message_length = 0, timer = 5000,timer_ref = TRef},
     loop(State).
 
 
@@ -31,6 +32,11 @@ loop(State) ->
                           {NextSequence,EncodedMessage} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
                           % Send message
                           send_message(State,EncodedMessage),
+                          % Cancel timer
+                          timer:cancel(?STATE.timer_ref),
+                          % Schedule a new timer
+                          timer:send_after(?STATE.timer,send_from_timer),
+                          % Loop
                           loop(?STATE{message_length = message_length(0,Message),messages = [Message],sequence_number = NextSequence});
             false   ->    % Yes we can - add it to the list of messages
                           loop(?STATE{message_length = MessageLength,messages = ?STATE.messages ++ [Message]})
