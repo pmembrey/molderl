@@ -65,7 +65,9 @@ gen_messagepacket(StreamName,NextSeq,Messages) ->
   PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
   {NewNextSeq,PacketPayload}.
 
-encode_message(Message) ->
+encode_message(Message) when is_list(Message) == true ->
+  encode_message(list_to_binary(Message));
+encode_message(Message) when is_binary(Message) == true ->
   Length = byte_size(Message),
   <<Length:16/big-integer,Message/binary>>.
 
