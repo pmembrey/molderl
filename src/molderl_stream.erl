@@ -50,6 +50,11 @@ send_heartbeat(State) ->
     Heartbeat = molderl_utils:gen_heartbeat(?STATE.stream_name,?STATE.sequence_number),
     gen_udp:send(?STATE.socket,{255,255,255,255}, ?STATE.destination_port, Heartbeat).
 
+send_endofsession(State) ->
+    EndOfSession = molderl_utils:gen_endofsession(?STATE.stream_name,?STATE.sequence_number),
+    gen_udp:send(?STATE.socket,{255,255,255,255}, ?STATE.destination_port, EndOfSession).
+
+
 message_length(0,Message) ->
     % Header is 20 bytes
     % 2 bytes for length of message
