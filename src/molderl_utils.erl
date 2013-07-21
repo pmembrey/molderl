@@ -3,7 +3,7 @@
 -endif.
 
 -module(molderl_utils).
--export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1]).
+-export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1,gen_messagepacket/3]).
 -include("molderl.hrl").
 
 
@@ -51,7 +51,23 @@ binary_padder(BinaryToPad) ->
   end.
 
 
+gen_messagepacket(StreamName,NextSeq,Message) when is_list(Message) == false ->
+    gen_messagepacket(StreamName,NextSeq,[Message]);
 
+gen_messagepacket(StreamName,NextSeq,Messages) ->
+  EncodedMessages = lists:map(fun encode_message/1,Messages),
+  io:format("~p~n",[EncodedMessages]),
+  % Next Serial number is...
+  Count = length(EncodedMessages),
+  NewNextSeq = NextSeq + Count,
+  io:format("Count: ~p~n",[Count]),
+  FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
+  PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
+  {NewNextSeq,PacketPayload}.
+
+encode_message(Message) ->
+  Length = byte_size(Message),
+  <<Length:16/big-integer,Message/binary>>.
 
 -ifdef(TEST).
 
