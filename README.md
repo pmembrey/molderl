@@ -8,3 +8,12 @@ Often this doesn't matter. If you're streaming live video or audio, a few droppe
 There are a couple of well known solutions to this problem. The first is PGM or Pragmatic Multicast. This is one of the more advanced offerings but is fairly complex to implement. A much simpler approach with similar features is MOLDUDP64, a protocol designed by the NASDAQ for delivering price feed data. This protocol is very light weight and only adds the bare essentials necessary to get reliable data transmission.
 
 molderl is a simple server implementation that will allow Erlang applications to send data using this protocol.
+
+
+## Simple tests
+
+Start the server: `application:start(molderl).`
+
+Create a MOLD64 stream: `molderl:create_stream(hello,"hello","255.255.255.255",8888).`
+
+Send a message: `molderl:send_message(hello,<<"helloworld">>).`
