@@ -9,13 +9,14 @@
 -define(PACKET_SIZE,50).
 -define(STATE,State#state).
 
--record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length } ).
+-record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer } ).
 
 init(StreamProcessName,StreamName,Destination,DestinationPort) ->
     register(StreamProcessName,self()),
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
-    State = #state{stream_name = MoldStreamName, destination = Destination,sequence_number = 1,socket = Socket,destination_port = DestinationPort, stream_process_name = StreamProcessName, messages = [], message_length = 0},
+    State = #state{stream_name = MoldStreamName, destination = Destination,sequence_number = 1,socket = Socket,destination_port = DestinationPort, stream_process_name = StreamProcessName, messages = [], message_length = 0, timer = 5000},
+    timer:send_after(5000,send_from_timer),
     loop(State).
 
 
@@ -33,7 +34,20 @@ loop(State) ->
                           loop(?STATE{message_length = message_length(0,Message),messages = [Message],sequence_number = NextSequence});
             false   ->    % Yes we can - add it to the list of messages
                           loop(?STATE{message_length = MessageLength,messages = ?STATE.messages ++ [Message]})
-          end
+          end;
+      send_from_timer ->    % Timer triggered a send
+                              case length(?STATE.messages) > 0 of
+                                true ->
+                                  {NextSequence,EncodedMessage} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
+                                  % Send message
+                                  send_message(State,EncodedMessage),
+                                  % Reset timer
+                                  timer:send_after(?STATE.timer,send_from_timer),
+                                  loop(?STATE{message_length = 0,messages = [],sequence_number = NextSequence});
+                                false ->
+                                  timer:send_after(?STATE.timer,send_from_timer),
+                                  loop(?STATE{message_length = 0,messages = []})
+                                end
 
     after 1000 -> 
       send_heartbeat(State),
