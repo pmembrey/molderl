@@ -12,12 +12,26 @@
 -record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
 
 init(StreamProcessName,StreamName,Destination,DestinationPort) ->
+    % Register the process name
     register(StreamProcessName,self()),
+    % Open the Socket
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true}]),
+    % Get the stream name formatted for inclusion in the MOLD64 packet
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
     {ok,TRef} = timer:send_after(5000,send_from_timer),
-    State = #state{stream_name = MoldStreamName, destination = Destination,sequence_number = 1,socket = Socket,destination_port = DestinationPort, stream_process_name = StreamProcessName, messages = [], message_length = 0, timer = 5000,timer_ref = TRef},
+    State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
+                        destination = Destination,                        % The IP address to send / broadcast / multicast to
+                        sequence_number = 1,                              % Next sequence number
+                        socket = Socket,                                  % The socket to send the data on
+                        destination_port = DestinationPort,               % Destination port for the data
+                        stream_process_name = StreamProcessName,          % The Erlang process name (it's an atom)
+                        messages = [],                                    % List of messages waiting to be encoded and sent
+                        message_length = 0,                               % Current length of messages if they were to be encoded in a MOLD64 packet
+                        timer = 5000,                                     % Timer for the auto-send. Ensures data never sits pending for too long
+                        timer_ref = TRef                                  % Reference to said timer to allow it to be canceled if message has just been sent
+                                                                          % i.e. when a send was triggered by a full packet
+                  },
     loop(State).
 
 
