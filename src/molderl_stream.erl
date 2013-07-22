@@ -3,7 +3,7 @@
 -endif.
 
 -module(molderl_stream).
--export([init/4]).
+-export([init/5]).
 -include("molderl.hrl").
 
 -define(PACKET_SIZE,1200).
@@ -11,9 +11,9 @@
 
 -record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
 
-init(StreamProcessName,StreamName,Destination,DestinationPort) ->
+init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom) ->
     register(StreamProcessName,self()),
-    {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true}]),
+    {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
     {ok,TRef} = timer:send_after(5000,send_from_timer),
@@ -64,15 +64,15 @@ loop(State) ->
 
 
 send_message(State,EncodedMessage) ->
-    gen_udp:send(?STATE.socket,{255,255,255,255}, ?STATE.destination_port, EncodedMessage).
+    gen_udp:send(?STATE.socket,?STATE.destination, ?STATE.destination_port, EncodedMessage).
 
 send_heartbeat(State) ->
     Heartbeat = molderl_utils:gen_heartbeat(?STATE.stream_name,?STATE.sequence_number),
-    gen_udp:send(?STATE.socket,{255,255,255,255}, ?STATE.destination_port, Heartbeat).
+    gen_udp:send(?STATE.socket,?STATE.destination, ?STATE.destination_port, Heartbeat).
 
 send_endofsession(State) ->
     EndOfSession = molderl_utils:gen_endofsession(?STATE.stream_name,?STATE.sequence_number),
-    gen_udp:send(?STATE.socket,{255,255,255,255}, ?STATE.destination_port, EndOfSession).
+    gen_udp:send(?STATE.socket,?STATE.destination, ?STATE.destination_port, EndOfSession).
 
 
 message_length(0,Message) ->
