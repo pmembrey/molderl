@@ -6,7 +6,7 @@
 -export([init/4]).
 -include("molderl.hrl").
 
--define(PACKET_SIZE,1500).
+-define(PACKET_SIZE,1200).
 -define(STATE,State#state).
 
 -record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
