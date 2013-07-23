@@ -50,7 +50,7 @@ loop(State) ->
                           % Schedule a new timer
                           {ok,TRef} = timer:send_after(?STATE.timer,send_from_timer),
                           % Loop
-                          loop(?STATE{message_length = message_length(0,Message),messages = [Message],sequence_number = NextSequence, timer_ref = Tref});
+                          loop(?STATE{message_length = message_length(0,Message),messages = [Message],sequence_number = NextSequence, timer_ref = TRef});
             false   ->    % Yes we can - add it to the list of messages
                           loop(?STATE{message_length = MessageLength,messages = ?STATE.messages ++ [Message]})
           end;
