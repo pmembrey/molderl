@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 -export([start_link/0,init/1,handle_call/3]).
--export([create_stream/5,send_message/2]).
+-export([create_stream/6,send_message/2]).
 -include("molderl.hrl").
  
 -record(state, { channels } ).
