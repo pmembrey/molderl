@@ -17,16 +17,16 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
-    {ok,TRef} = timer:send_after(5000,send_from_timer),
+    {ok,TRef} = timer:send_after(10,send_from_timer),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
                         destination = Destination,                        % The IP address to send / broadcast / multicast to
                         sequence_number = 1,                              % Next sequence number
                         socket = Socket,                                  % The socket to send the data on
                         destination_port = DestinationPort,               % Destination port for the data
                         stream_process_name = StreamProcessName,          % The Erlang process name (it's an atom)
-                        messages = [],                                    % List of messages waiting to be encoded and sent
+                        messages = [],                                    % List of messages waiting to be encoded aznd sent
                         message_length = 0,                               % Current length of messages if they were to be encoded in a MOLD64 packet
-                        timer = 5000,                                     % Timer for the auto-send. Ensures data never sits pending for too long
+                        timer = 10,                                     % Timer for the auto-send. Ensures data never sits pending for too long
                         timer_ref = TRef                                  % Reference to said timer to allow it to be canceled if message has just been sent
                                                                           % i.e. when a send was triggered by a full packet
                   },
@@ -41,11 +41,12 @@ loop(State) ->
           % Can we fit this in?
           case MessageLength > ?PACKET_SIZE of
             true    ->    % Nope we can't, send what we have and requeue
+                          % Cancel timer
+                          timer:cancel(?STATE.timer_ref),
                           {NextSequence,EncodedMessage} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
                           % Send message
                           send_message(State,EncodedMessage),
-                          % Cancel timer
-                          timer:cancel(?STATE.timer_ref),
+
                           % Schedule a new timer
                           timer:send_after(?STATE.timer,send_from_timer),
                           % Loop
