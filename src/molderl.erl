@@ -36,8 +36,8 @@ handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationP
 
 
 
-create_stream(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom) ->
-    gen_server:call(?MODULE,{create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom}).
+create_stream(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
+    gen_server:call(?MODULE,{create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer}).
 
 send_message(StreamProcessName,Message) ->
     StreamProcessName ! {send,Message},
