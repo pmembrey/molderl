@@ -3,7 +3,7 @@
 -endif.
 
 -module(molderl_stream).
--export([init/5]).
+-export([init/6]).
 -include("molderl.hrl").
 
 -define(PACKET_SIZE,1200).
@@ -12,12 +12,12 @@
 -record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
 
 
-init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom) ->
+init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
     register(StreamProcessName,self()),
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
-    {ok,TRef} = timer:send_after(10,send_from_timer),
+    {ok,TRef} = timer:send_after(Timer,send_from_timer),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
                         destination = Destination,                        % The IP address to send / broadcast / multicast to
                         sequence_number = 1,                              % Next sequence number
@@ -26,7 +26,7 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
                         stream_process_name = StreamProcessName,          % The Erlang process name (it's an atom)
                         messages = [],                                    % List of messages waiting to be encoded aznd sent
                         message_length = 0,                               % Current length of messages if they were to be encoded in a MOLD64 packet
-                        timer = 10,                                     % Timer for the auto-send. Ensures data never sits pending for too long
+                        timer = Timer,                                    % Timer for the auto-send. Ensures data never sits pending for too long
                         timer_ref = TRef                                  % Reference to said timer to allow it to be canceled if message has just been sent
                                                                           % i.e. when a send was triggered by a full packet
                   },

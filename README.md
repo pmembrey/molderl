@@ -14,6 +14,9 @@ molderl is a simple server implementation that will allow Erlang applications to
 
 Start the server: `application:start(molderl).`
 
-Create a MOLD64 stream: `molderl:create_stream(hello,"hello",{255,255,255,255},8888,{192,168,0,1}).`
+Create a MOLD64 stream: `molderl:create_stream(hello,"hello",{255,255,255,255},8888,{192,168,0,1},5000).`
+
+
+
 
 Send a message: `molderl:send_message(hello,<<"helloworld">>).`

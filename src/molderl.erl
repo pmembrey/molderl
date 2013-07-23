@@ -30,8 +30,8 @@ init(_Args) ->
 
 
 
-handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom},_From,State) ->
-    spawn_link(molderl_stream,init,[StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom]),
+handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
+    spawn_link(molderl_stream,init,[StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer]),
     {reply,ok,State}.
 
 
