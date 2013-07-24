@@ -16,6 +16,8 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
     register(StreamProcessName,self()),
     {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
+    % Create ETS table to store recovery stream (currently unlimited right now)
+    ets:new(recovery_table,[ordered_set,named_table]),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
     {ok,TRef} = timer:send_after(Timer,send_from_timer),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
@@ -43,9 +45,11 @@ loop(State) ->
             true    ->    % Nope we can't, send what we have and requeue
                           % Cancel timer
                           timer:cancel(?STATE.timer_ref),
-                          {NextSequence,EncodedMessage} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
+                          {NextSequence,EncodedMessage,MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
                           % Send message
                           send_message(State,EncodedMessage),
+                          % Insert into recovery table
+                          ets:insert(recovery_table,MessagesWithSequenceNumbers),
 
                           % Schedule a new timer
                           {ok,TRef} = timer:send_after(?STATE.timer,send_from_timer),
@@ -57,11 +61,13 @@ loop(State) ->
       send_from_timer ->    % Timer triggered a send
                               case length(?STATE.messages) > 0 of
                                 true ->
-                                  {NextSequence,EncodedMessage} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
+                                  {NextSequence,EncodedMessage,MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
                                   % Send message
                                   send_message(State,EncodedMessage),
                                   % Reset timer
                                   timer:send_after(?STATE.timer,send_from_timer),
+                                  % Insert into recovery table
+                                  ets:insert(recovery_table,MessagesWithSequenceNumbers),
                                   loop(?STATE{message_length = 0,messages = [],sequence_number = NextSequence});
                                 false ->
                                   timer:send_after(?STATE.timer,send_from_timer),

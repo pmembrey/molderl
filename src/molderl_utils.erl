@@ -62,12 +62,18 @@ gen_messagepacket(StreamName,NextSeq,Message) when is_list(Message) == false ->
     gen_messagepacket(StreamName,NextSeq,[Message]);
 gen_messagepacket(StreamName,NextSeq,Messages) ->
   EncodedMessages = lists:map(fun encode_message/1,Messages),
+  EncodedMessagesWithSequenceNumbers = lists:map(fun encode_message_with_sequence_numbers/2,NextSeq,EncodedMessages),
   % Next Serial number is...
   Count = length(EncodedMessages),
   NewNextSeq = NextSeq + Count,
   FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
   PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
-  {NewNextSeq,PacketPayload}.
+  {NewNextSeq,PacketPayload,EncodedMessagesWithSequenceNumbers}.
+
+
+
+encode_message_with_sequence_numbers(Message,Accumulator) ->
+  {{Accumulator,Message},Accumulator+1}.
 
 %% ------------------------------------------------
 %% Takes a message as either a list of a binary and
