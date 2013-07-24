@@ -62,7 +62,7 @@ gen_messagepacket(StreamName,NextSeq,Message) when is_list(Message) == false ->
     gen_messagepacket(StreamName,NextSeq,[Message]);
 gen_messagepacket(StreamName,NextSeq,Messages) ->
   EncodedMessages = lists:map(fun encode_message/1,Messages),
-  EncodedMessagesWithSequenceNumbers = lists:map(fun encode_message_with_sequence_numbers/2,NextSeq,EncodedMessages),
+  EncodedMessagesWithSequenceNumbers = lists:mapfoldl(fun encode_message_with_sequence_numbers/2,NextSeq,EncodedMessages),
   % Next Serial number is...
   Count = length(EncodedMessages),
   NewNextSeq = NextSeq + Count,
