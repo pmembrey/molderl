@@ -9,7 +9,7 @@
 -define(PACKET_SIZE,1200).
 -define(STATE,State#state).
 
--record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref } ).
+-record(state, { stream_name, destination,sequence_number, socket, destination_port, stream_process_name,messages, message_length,timer,timer_ref,recovery_process } ).
 
 
 init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
@@ -18,6 +18,8 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Create ETS table to store recovery stream (currently unlimited right now)
     ets:new(recovery_table,[ordered_set,named_table]),
+    % Start recovery process
+    RecoveryProcess = spawn_link(molderl_recovery,init,[MoldStreamName,DestinationPort,recovery_table]),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
     {ok,TRef} = timer:send_after(Timer,send_from_timer),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
@@ -29,8 +31,9 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
                         messages = [],                                    % List of messages waiting to be encoded aznd sent
                         message_length = 0,                               % Current length of messages if they were to be encoded in a MOLD64 packet
                         timer = Timer,                                    % Timer for the auto-send. Ensures data never sits pending for too long
-                        timer_ref = TRef                                  % Reference to said timer to allow it to be canceled if message has just been sent
+                        timer_ref = TRef,                                 % Reference to said timer to allow it to be canceled if message has just been sent
                                                                           % i.e. when a send was triggered by a full packet
+                        recovery_process = RecoveryProcess                % Process that handles dropped packet recovery
                   },
     loop(State).
 
