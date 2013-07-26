@@ -37,7 +37,8 @@ loop(State) ->
 			<<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
 			io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p", [IP,SessionName,SequenceNumber,Count]),
 			% Get messages from recovery table
-			Messages = ets:select(recovery_table,ets:fun2ms(fun({X,Y}) when X < 5 ,X > 2 -> Y end)),
+			% Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
+			Messages = ets:select(recovery_table,[{{'$1','$2'},[{'=<','$1',SequenceNumber + Count},{'>=','$1',SequenceNumber}],['$2']}]),
 			% Generate a MOLD packet
 			{_NextSequence,EncodedMessage,_MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,SequenceNumber,Messages),
 			% Send that packet back
