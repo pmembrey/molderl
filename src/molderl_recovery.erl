@@ -40,7 +40,7 @@ loop(State) ->
 			% Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
 			Messages = ets:select(recovery_table,[{{'$1','$2'},[{'=<','$1',SequenceNumber + Count -1},{'>=','$1',SequenceNumber}],['$2']}]),
 			% Generate a MOLD packet
-			{_NextSequence,EncodedMessage,_MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,SequenceNumber,Messages),
+			EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,Messages),
 			% Send that packet back
 			gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage),
 			% Loop - and we're done

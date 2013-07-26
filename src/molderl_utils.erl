@@ -3,7 +3,7 @@
 -endif.
 
 -module(molderl_utils).
--export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1,gen_messagepacket/3]).
+-export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1,gen_messagepacket/3,gen_messagepacket_without_seqnum/3]).
 -include("molderl.hrl").
 
 
@@ -70,6 +70,11 @@ gen_messagepacket(StreamName,NextSeq,Messages) ->
   PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
   {NewNextSeq,PacketPayload,EncodedMessagesWithSequenceNumbers}.
 
+gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
+  Count = length(Messages),
+  FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
+  PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
+  PacketPayload.
 
 
 encode_message_with_sequence_numbers(Message,Accumulator) ->
