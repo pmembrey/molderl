@@ -30,8 +30,8 @@ init(StreamName,Port,ETSName) ->
 
 loop(State) ->
 	receive
-		{udp, Client, _Ip, _Port, Message} ->
+		{udp, _Client, IP, _Port, Message} ->
 			<<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
-			io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p", [Client,SessionName,SequenceNumber,Count]),
+			io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p", [IP,SessionName,SequenceNumber,Count]),
 			loop(State)
 	end.
