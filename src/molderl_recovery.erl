@@ -39,7 +39,7 @@ loop(State) ->
 			% Get messages from recovery table
 			Messages = ets:select(recovery_table,ets:fun2ms(fun({X,Y}) when X < 5 ,X > 2 -> Y end)),
 			% Generate a MOLD packet
-			{_NextSequence,EncodedMessage,_MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,?STATE.sequence_number,?STATE.messages),
+			{_NextSequence,EncodedMessage,_MessagesWithSequenceNumbers} = molderl_utils:gen_messagepacket(?STATE.stream_name,SequenceNumber,Messages),
 			% Send that packet back
 			gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage),
 			% Loop - and we're done
