@@ -72,7 +72,7 @@ gen_messagepacket(StreamName,NextSeq,Messages) ->
 
 gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
   Count = length(Messages),
-  FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
+  FlattenedMessages = list_to_binary(lists:flatten(Messages)),
   PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
   PacketPayload.
 
