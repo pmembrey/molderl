@@ -14,7 +14,8 @@
 
 init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
     register(StreamProcessName,self()),
-    {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
+    %{ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom}]),
+    {ok, Socket} = gen_udp:open( 0, [binary, {broadcast, true},{ip, IPAddressToSendFrom},{add_membership, {Destination, IPAddressToSendFrom}},{multicast_if, IPAddressToSendFrom}]),
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
     % Create ETS table to store recovery stream (currently unlimited right now)
     ets:new(recovery_table,[ordered_set,named_table]),
