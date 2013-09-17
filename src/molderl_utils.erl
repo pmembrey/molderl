@@ -4,6 +4,7 @@
 
 -module(molderl_utils).
 -export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1,gen_messagepacket/3,gen_messagepacket_without_seqnum/3]).
+-export([message_length/2]).
 -include("molderl.hrl").
 
 
@@ -91,6 +92,23 @@ encode_message(Message) when is_binary(Message) == true ->
   Length = byte_size(Message),
   <<Length:16/big-integer,Message/binary>>.
 
+%% ------------------------------------------------
+%% Given a parent message's length and a child
+%% message (as a bitstring), returns what would
+%% be the resulting message length if the child
+%% message was to be appended to the parent message
+%% (according to Mold 64 protocol)
+%% ------------------------------------------------
+message_length(0,Message) ->
+    % Header is 20 bytes
+    % 2 bytes for length of message
+    % X bytes for message
+    22 + byte_size(Message);
+message_length(Size,Message) ->
+    % Need to add 2 bytes for the length
+    % and X bytes for the message itself
+    Size + 2 + byte_size(Message).
+
 -ifdef(TEST).
 
 %% -----------------------
@@ -131,4 +149,14 @@ gen_heartbeat_test() ->
 gen_endofsession_test() ->
   StreamName = <<"helloworld">>,
   ?assert(gen_endofsession(StreamName,20) == <<StreamName/binary,20:64/big-integer,?END_OF_SESSION:16/big-integer>>).
+
+%% -----------------------------------
+%% Tests for message length computing
+%% -----------------------------------
+message_length_test() ->
+    ?assertEqual(22, message_length(0,<<>>)),
+    ?assertEqual(25, message_length(0,<<"f","o","o">>)),
+    ?assertEqual(3, message_length(1,<<>>)),
+    ?assertEqual(6, message_length(1,<<"f","o","o">>)).
+
 -endif.

@@ -20,7 +20,7 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
     % Create ETS table to store recovery stream (currently unlimited right now)
     ets:new(recovery_table,[ordered_set,named_table]),
     % Start recovery process
-    RecoveryProcess = spawn_link(molderl_recovery,init,[MoldStreamName,DestinationPort,recovery_table]),
+    RecoveryProcess = spawn_link(molderl_recovery,init,[MoldStreamName,DestinationPort,recovery_table, ?PACKET_SIZE]),
     % Kick off the timer, keep the reference (TRef) so we can cancel it if we send before the timer is hit
     {ok,TRef} = timer:send_after(Timer,send_from_timer),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
@@ -43,7 +43,7 @@ loop(State) ->
     receive
       {send,Message} -> % Time to send a message!
           % Calculate message length
-          MessageLength = message_length(?STATE.message_length,Message),
+          MessageLength = molderl_utils:message_length(?STATE.message_length,Message),
           % Can we fit this in?
           case MessageLength > ?PACKET_SIZE of
             true    ->    % Nope we can't, send what we have and requeue
@@ -58,7 +58,7 @@ loop(State) ->
                           % Schedule a new timer
                           {ok,TRef} = timer:send_after(?STATE.timer,send_from_timer),
                           % Loop
-                          loop(?STATE{message_length = message_length(0,Message),messages = [Message],sequence_number = NextSequence, timer_ref = TRef});
+                          loop(?STATE{message_length = molderl_utils:message_length(0,Message),messages = [Message],sequence_number = NextSequence, timer_ref = TRef});
             false   ->    % Yes we can - add it to the list of messages
                           loop(?STATE{message_length = MessageLength,messages = ?STATE.messages ++ [Message]})
           end;
@@ -97,13 +97,3 @@ send_endofsession(State) ->
     EndOfSession = molderl_utils:gen_endofsession(?STATE.stream_name,?STATE.sequence_number),
     gen_udp:send(?STATE.socket,?STATE.destination, ?STATE.destination_port, EndOfSession).
 
-
-message_length(0,Message) ->
-    % Header is 20 bytes
-    % 2 bytes for length of message
-    % X bytes for message
-    22 + byte_size(Message);
-message_length(Size,Message) ->
-    % Need to add 2 bytes for the length
-    % and X bytes for the message itself
-    Size + 2 + byte_size(Message).
