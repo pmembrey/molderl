@@ -9,14 +9,29 @@ There are a couple of well known solutions to this problem. The first is PGM or 
 
 molderl is a simple server implementation that will allow Erlang applications to send data using this protocol.
 
-
-## Simple tests
+### Simple tests how-to
 
 Start the server: `application:start(molderl).`
 
 Create a MOLD64 stream: `molderl:create_stream(hello,"hello",{239,0,0,1},8888,{192,168,0,1},5000).`
 
-
-
-
 Send a message: `molderl:send_message(hello,<<"helloworld">>).`
+
+### Unit tests how-to
+
+1. Compile a module with the TEST flag:
+
+        $ erlc -DTEST -o ebin/ /src/molderl_utils.erl
+
+    or, using rebar,
+
+        $ rebar -DTEST compile
+
+2. Fire up the Erlang shell
+
+        $ erl
+
+3. Run the eunit tests:
+
+        > eunit:test("ebin/molderl_utils.beam").
+
