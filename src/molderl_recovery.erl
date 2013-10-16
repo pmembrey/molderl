@@ -5,7 +5,7 @@
 -module(molderl_recovery).
 
 -define(SERVER, ?MODULE).
--export([init/3]).
+-export([init/4]).
 -include("molderl.hrl").
 -define(STATE,State#state).
  
