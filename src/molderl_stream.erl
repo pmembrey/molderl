@@ -20,7 +20,7 @@ init(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFro
     % Create ETS table to store recovery stream (currently unlimited right now)
     ets:new(recovery_table,[ordered_set,named_table]),
     % Kick off the Prodding process...
-    spawn_link(molderl_prodder,init,[ProdInterval]),
+    spawn_link(molderl_prodder,init,[self(),ProdInterval]),
     % Start recovery process
     RecoveryProcess = spawn_link(molderl_recovery,init,[MoldStreamName,DestinationPort,recovery_table, ?PACKET_SIZE]),
     State = #state{     stream_name = MoldStreamName,                     % Name of the stream encoded for MOLD64 (i.e. padded binary)
