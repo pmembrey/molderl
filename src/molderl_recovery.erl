@@ -5,51 +5,69 @@
 
 -module(molderl_recovery).
 
--export([init/4]).
+-behaviour(gen_server).
+
+-export([start_link/3, store/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
 
 -define(STATE,State#state).
 
 -record(state, { 
                 socket, 		% Socket to send data on
                 port,			% Port to send data to
-                listen_port,	% Port to listen on
                 stream_name,	% Stream name for encoding the response
-                ets_name,		% ETS table with the replay data in it
+                table_id,		% ETS table with the replay data in it
                 packet_size     % maximum packet size of messages in bytes
-               } ).
+               }).
 
-init(StreamName,Port,ETSName,PacketSize) ->
+start_link(StreamName, Port, PacketSize) ->
+    gen_server:start_link(?MODULE, [StreamName, Port, PacketSize], []).
+
+store(Pid, Item) ->
+    gen_server:cast(Pid, {store, Item}).
+
+init([StreamName, Port, PacketSize]) ->
+
     {ok, Socket} = gen_udp:open(Port + 1, [binary, {active,true}]),
 
     State = #state {
                     socket      = Socket,
                     port        = Port,
-                    listen_port = Port + 1,
                     stream_name = StreamName,
-                    ets_name    = ETSName,
+                    table_id    = ets:new(recovery_table, [ordered_set]),
                     packet_size = PacketSize
                    },
-    loop(State).
+    {ok, State}.
 
+handle_cast({store, Item}, State) ->
+    ets:insert(?STATE.table_id, Item),
+    {noreply, State}.
 
-loop(State) ->
-    receive
-        {udp, _Client, IP, _Port, Message} ->
-            <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
-            io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p",
-                      [IP,SessionName,SequenceNumber,Count]),
-            % Get messages from recovery table
-            % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
-            Messages = ets:select(recovery_table,[{{'$1','$2'},[{'=<','$1',SequenceNumber + Count -1},{'>=','$1',SequenceNumber}],['$2']}]),
-            % Remove messages if bigger than allowed packet size
-            TruncatedMessages = truncate_messages(Messages, ?STATE.packet_size),
-            % Generate a MOLD packet
-            EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
-            gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage);
-        Other ->
-            io:format("function ~p:loop/1 received unexpected message: ~p~n", [?MODULE, Other])
-    end,
-    loop(State).
+handle_info({udp, _Client, IP, _Port, Message}, State) ->
+    <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
+    io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p",
+              [IP,SessionName,SequenceNumber,Count]),
+    % Get messages from recovery table
+    % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
+    Messages = ets:select(?STATE.table_id,
+                          [{{'$1','$2'},[{'=<','$1',SequenceNumber + Count -1},{'>=','$1',SequenceNumber}],['$2']}]),
+    % Remove messages if bigger than allowed packet size
+    TruncatedMessages = truncate_messages(Messages, ?STATE.packet_size),
+    % Generate a MOLD packet
+    EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
+    gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage),
+    {no_reply, State}.
+
+handle_call(Msg, _From, State) ->
+    io:format("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
+    {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+terminate(normal, _State) ->
+    ok.
 
 %% ------------------------------------------------------------
 %% Takes a list of bitstrings, and returns a truncation of
