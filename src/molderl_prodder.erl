@@ -1,11 +1,6 @@
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -module(molderl_prodder).
 -export([init/2]).
--include("molderl.hrl").
-
 
 init(MoldStreamPid,Timeout) ->
     % Wait for timeout...
