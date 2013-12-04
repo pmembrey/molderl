@@ -24,30 +24,42 @@ send_message(StreamProcessName,Message) ->
 % gen_server's callbacks
 
 init(SupervisorPID) ->
-    Spec = ?CHILD(molderl_stream_sup_sup, [], permanent, supervisor),
-    {ok, StreamsSup} = supervisor:start_child(SupervisorPID, Spec),
-    {ok, #state{streams_sup=StreamsSup}}.
+
+    % remind yourself to start molderl_stream_supersup
+    self() ! {start_molderl_stream_supersup, SupervisorPID},
+
+    {ok, #state{}}.
 
 handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
     case lists:member(StreamProcessName, State#state.streams) of
         true ->
             {reply, {error, already_exist}, State};
         false ->
-            Spec = ?CHILD(molderl_stream_sup,
+            Spec = ?CHILD(make_ref(),
+                          molderl_stream_sup,
                           [StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer],
                           transient,
                           supervisor),
-            supervisor:start_child(State#state.streams_sup, Spec),
-            {reply, ok, State#state{streams=[StreamProcessName|State#state.streams]}}
+            case supervisor:start_child(State#state.streams_sup, Spec) of
+                {ok, _Pid} ->
+                    {reply, ok, State#state{streams=[StreamProcessName|State#state.streams]}};
+                {error, Error} ->
+                    {reply, {error, Error},  State}
+            end
     end.
 
 handle_cast({send, StreamProcessName, Message}, State) ->
-    mold_stream:send(StreamProcessName, Message),
+    molderl_stream:send(StreamProcessName, Message),
     {noreply, State}.
 
-handle_info(Msg, State) ->
-    io:format("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
-    {noreply, State}.
+handle_info({start_molderl_stream_supersup, SupervisorPID}, State) ->
+    Spec = ?CHILD(molderl_stream_supersup, molderl_stream_supersup, [], permanent, supervisor),
+    case supervisor:start_child(SupervisorPID, Spec) of
+        {ok, StreamsSup} ->
+            {noreply, State#state{streams_sup=StreamsSup}};
+        {error, {already_started, StreamsSup}}->
+            {noreply, State#state{streams_sup=StreamsSup}}
+    end.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.

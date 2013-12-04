@@ -26,6 +26,6 @@ start_link(StreamProcessName, StreamName, Destination, DestinationPort,
 %% ===================================================================
 
 init(Args) ->
-    Stream = ?CHILD(molderl_stream, [self()|Args], transient, worker),
+    Stream = ?CHILD(make_ref(), molderl_stream, [self()|Args], transient, worker),
     {ok, {{one_for_all, 5, 10}, [Stream]}}.
 

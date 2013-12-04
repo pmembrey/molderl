@@ -5,5 +5,6 @@
 -define(END_OF_SESSION,16#FFFF).
 
 % Helper macro for declaring children of supervisor
--define(CHILD(I, Args, Restart, Type), {I, {I, start_link, Args}, Restart, 5000, Type, [I]}).
+-define(CHILD(ID, MODULE, Args, Restart, Type),
+        {ID, {MODULE, start_link, Args}, Restart, 5000, Type, [MODULE]}).
 

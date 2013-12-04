@@ -92,9 +92,9 @@ handle_info(timeout, State) ->
     send_heartbeat(State),
     {noreply, State};
 handle_info({initialize, SupervisorPID, MoldStreamName, DestinationPort, PacketSize, ProdInterval}, State) ->
-    ProdderSpec = ?CHILD(molderl_prodder, [self(), ProdInterval], transient, worker),
+    ProdderSpec = ?CHILD(make_ref(), molderl_prodder, [self(), ProdInterval], transient, worker),
     supervisor:start_child(SupervisorPID, ProdderSpec),
-    RecoverySpec = ?CHILD(molderl_recovery, [MoldStreamName, DestinationPort, PacketSize], transient, worker),
+    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [MoldStreamName, DestinationPort, PacketSize], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}}.
 
