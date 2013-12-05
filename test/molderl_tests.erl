@@ -3,6 +3,8 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-include("../src/molderl.hrl").
+
 -define(MCAST_GROUP_IP, {239,192,42,69}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -15,8 +17,9 @@ start() ->
     [].
  
 stop(_) ->
-    io:format(user,"Cleaning up...~n",[]).
- 
+    io:format(user,"Cleaning up...~n",[]),
+    application:stop(molderl).
+
 instantiator(_) ->
     FooPort = 7777,
     BarPort = 8888,
@@ -25,17 +28,55 @@ instantiator(_) ->
     {ok, FooSocket} = gen_udp:open(FooPort, [binary]),
     {ok, BarSocket} = gen_udp:open(BarPort, [binary]),
     {ok, BazSocket} = gen_udp:open(BazPort, [binary]),
-    CreateResult1 = molderl:create_stream(foo,"foo",?MCAST_GROUP_IP,FooPort,LocalHostIP,200),
-    CreateResult2 = molderl:create_stream(bar,"bar",?MCAST_GROUP_IP,BarPort,LocalHostIP,200),
-    CreateResult3 = molderl:create_stream(baz,"baz",?MCAST_GROUP_IP,BazPort,LocalHostIP,200),
+    CreateResult1 = molderl:create_stream(bar,"bar",?MCAST_GROUP_IP,BarPort,LocalHostIP,100),
+    CreateResult2 = molderl:create_stream(baz,"baz",?MCAST_GROUP_IP,BazPort,LocalHostIP,200),
+    CreateResult3 = molderl:create_stream(foo,"foo",?MCAST_GROUP_IP,FooPort,LocalHostIP,100),
+    CreateResult4 = molderl:create_stream(bar,"bar",?MCAST_GROUP_IP,BarPort,LocalHostIP,100),
     molderl:send_message(foo, <<"HelloWorld">>),
-    [Msg1] = receive_message("foo", FooSocket),
+    [{Seq1, Msg1}] = receive_messages("foo", FooSocket),
+    molderl:send_message(foo, <<"HelloWorld">>),
+    [{Seq2, Msg2}] = receive_messages("foo", FooSocket),
+    molderl:send_message(foo, <<"foo">>),
+    molderl:send_message(foo, <<"bar">>),
+    molderl:send_message(foo, <<"baz">>),
+    Msgs = receive_messages("foo", FooSocket),
+    molderl:send_message(foo, <<"foo">>),
+    molderl:send_message(bar, <<"bar">>),
+    molderl:send_message(baz, <<"baz">>),
+    molderl:send_message(foo, <<"foo">>),
+    molderl:send_message(bar, <<"bar">>),
+    molderl:send_message(baz, <<"baz">>),
+    BazMsgs = receive_messages("baz", BazSocket),
+    FooMsgs = receive_messages("foo", FooSocket),
+    BarMsgs = receive_messages("bar", BarSocket),
+    BigMsg = list_to_binary([random:uniform(100) || _ <- lists:seq(1, 2*?PACKET_SIZE)]),
+    molderl:send_message(baz, BigMsg),
+    [{_,ExpectedBigMsg}] = receive_messages("baz", BazSocket),
+
+    % Recovery tests
+    SessionName = molderl_utils:gen_streamname("foo"),
+    Request1 = <<SessionName/binary, Seq1:64, 1:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooPort+1, Request1),
+    [RecoveredMsg1] = receive_messages("foo", FooSocket),
+    Request2 = <<SessionName/binary, Seq2:64, 1:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooPort+1, Request2),
+    [RecoveredMsg2] = receive_messages("foo", FooSocket),
+
     [
         ?_assertEqual(ok, CreateResult1),
         ?_assertEqual(ok, CreateResult2),
         ?_assertEqual(ok, CreateResult3),
-        ?_assertEqual(<<"HelloWorld">>, Msg1)
-    ].
+        ?_assertEqual({error, already_exist}, CreateResult4),
+        ?_assertEqual(<<"HelloWorld">>, Msg1),
+        ?_assertEqual(<<"HelloWorld">>, Msg2),
+        ?_assertMatch([{_,<<"foo">>},{_,<<"bar">>},{_,<<"baz">>}], Msgs),
+        ?_assertMatch([{_,<<"bar">>},{_,<<"bar">>}], BarMsgs),
+        ?_assertMatch([{_,<<"baz">>},{_,<<"baz">>}], BazMsgs),
+        ?_assertMatch([{_,<<"foo">>},{_,<<"foo">>}], FooMsgs),
+        ?_assertEqual(BigMsg, ExpectedBigMsg),
+        ?_assertEqual({Seq1, Msg1}, RecoveredMsg1),
+        ?_assertEqual({Seq2, Msg2}, RecoveredMsg2)
+     ].
 
 molderl_test_() ->
     {setup,
@@ -43,18 +84,18 @@ molderl_test_() ->
      fun stop/1,
      fun instantiator/1}.
 
-receive_message(StreamName, Socket) ->
+receive_messages(StreamName, Socket) ->
     ModName = molderl_utils:gen_streamname(StreamName),
+    ModNameSize = byte_size(ModName),
     receive
-        {udp, Socket, _FromIp, _FromPort, Packet} ->
-            ModNameSize = byte_size(ModName),
-            <<ModName:ModNameSize/binary,
-              _NextSeq:64/big-integer,
-              _Count:16/big-integer,
-              Msgs/binary>> = Packet,
-              [Msg || <<Size:16/big-integer, Msg:Size/binary>> <= Msgs]
+        {udp, Socket, _, _, <<ModName:ModNameSize/binary, _:80/integer>>} ->
+            receive_messages(StreamName, Socket); % ignore heartbeats
+        {udp, Socket, _, _, <<ModName:ModNameSize/binary, Tail/binary>>} ->
+            <<NextSeq:64/big-integer, Count:16/big-integer, RawMsgs/binary>> = Tail,
+            Msgs = [Msg || <<Size:16/big-integer, Msg:Size/binary>> <= RawMsgs],
+            lists:zip(lists:seq(NextSeq, NextSeq+Count-1), Msgs)
     after
-        250 ->
+        1000 ->
             {error, timeout}
     end.
 

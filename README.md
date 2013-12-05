@@ -19,19 +19,5 @@ Send a message: `molderl:send_message(hello,<<"helloworld">>).`
 
 ### Unit tests how-to
 
-1. Compile a module with the TEST flag:
-
-        $ erlc -DTEST -o ebin/ /src/molderl_utils.erl
-
-    or, using rebar,
-
-        $ rebar -DTEST compile
-
-2. Fire up the Erlang shell
-
-        $ erl
-
-3. Run the eunit tests:
-
-        > eunit:test("ebin/molderl_utils.beam").
+    $ rebar eunit
 
