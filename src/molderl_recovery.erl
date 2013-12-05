@@ -46,7 +46,7 @@ handle_cast({store, Item}, State) ->
 
 handle_info({udp, _Client, IP, _Port, Message}, State) ->
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
-    io:format("received recovery request from ~p: [session name] ~p  [sequence number] ~p  [count] ~p",
+    io:format("Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p~n",
               [IP,SessionName,SequenceNumber,Count]),
     % Get messages from recovery table
     % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
@@ -57,7 +57,7 @@ handle_info({udp, _Client, IP, _Port, Message}, State) ->
     % Generate a MOLD packet
     EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
     gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage),
-    {no_reply, State}.
+    {noreply, State}.
 
 handle_call(Msg, _From, State) ->
     io:format("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
