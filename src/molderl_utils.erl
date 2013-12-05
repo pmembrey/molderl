@@ -51,32 +51,26 @@ binary_padder(BinaryToPad) ->
 
 %% -------------------------------------------------
 %% Generates a message packet. This takes the stream
-%% name, the next sequence number and a message (or 
+%% name, the next sequence number and a message (or
 %% list of messages). It returns a completed MOLD64
 %% packet as well as the next sequence number. This
 %% is needed for generating the next message in the
 %% stream.
 %% -------------------------------------------------
-gen_messagepacket(StreamName,NextSeq,Message) when not is_list(Message) ->
-    gen_messagepacket(StreamName,NextSeq,[Message]);
-gen_messagepacket(StreamName,NextSeq,Messages) ->
-    EncodedMessages = lists:map(fun encode_message/1,Messages),
-    Lambda = fun encode_message_with_sequence_numbers/2,
-    {EncodedMessagesWithSequenceNumbers,_NextSeq} = lists:mapfoldl(Lambda,NextSeq,EncodedMessages),
-    % Next Serial number is...
-    Count = length(EncodedMessages),
-    NewNextSeq = NextSeq + Count,
-    FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
-    PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
-    {NewNextSeq,PacketPayload,EncodedMessagesWithSequenceNumbers}.
+gen_messagepacket(StreamName, NextSeq, Message) when not is_list(Message) ->
+    gen_messagepacket(StreamName, NextSeq, [Message]);
+gen_messagepacket(StreamName, NextSeq, Messages) ->
+    Lambda = fun(Msg, I) -> {encode_message(Msg), I+1} end,
+    {EncodedMsgs, Count} = lists:mapfoldl(Lambda, 0, Messages),
+    EncodedMsgsBinary = list_to_binary(EncodedMsgs),
+    Payload = <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>,
+    EncodedMsgsWithSeqNum = lists:zip(lists:seq(NextSeq, NextSeq+Count-1), EncodedMsgs),
+    {NextSeq+Count, Payload, EncodedMsgsWithSeqNum}.
 
 gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
     Count = length(Messages),
     FlattenedMessages = list_to_binary(lists:flatten(Messages)),
     <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>.
-
-encode_message_with_sequence_numbers(Message,Accumulator) ->
-    {{Accumulator,Message},Accumulator+1}.
 
 %% ------------------------------------------------
 %% Takes a message as either a list of a binary and
@@ -154,6 +148,30 @@ message_length_test() ->
     ?assertEqual(25, message_length(0,<<"f","o","o">>)),
     ?assertEqual(3, message_length(1,<<>>)),
     ?assertEqual(6, message_length(1,<<"f","o","o">>)).
+
+%% -----------------------------------
+%% Tests for encoding messages
+%% -----------------------------------
+encode_message_test() ->
+    ?assertEqual(encode_message(<<"foo">>), <<3:16/big-integer, <<"foo">>/binary>>),
+    ?assertEqual(encode_message("foo"), <<3:16/big-integer, <<"foo">>/binary>>).
+
+%% -----------------------------------
+%% Tests for generating message packet
+%% -----------------------------------
+gen_messagepacket_test() ->
+    Msgs = ["foo", "bar", "baz", "qux"],
+    Result = gen_messagepacket(<<"foo">>, 23, Msgs),
+    {NextSeq, PacketPayload, EncodedMessagesWithSequenceNumbers} = Result,
+    ?assertEqual(27, NextSeq),
+    EncodedMsgs = [<<3:16/integer, <<"foo">>/binary>>, <<3:16/integer, <<"bar">>/binary>>,
+                   <<3:16/integer, <<"baz">>/binary>>, <<3:16/integer, <<"qux">>/binary>>],
+    FlattenedMsgs = list_to_binary(lists:flatten(EncodedMsgs)),
+    ExpectedPayload = <<<<"foo">>/binary, 23:64/big-integer, 4:16/big-integer, FlattenedMsgs/binary>>,
+    ?assertEqual(ExpectedPayload, PacketPayload),
+    EncodedMsgsSeqs = [{23, <<3:16/integer, <<"foo">>/binary>>}, {24, <<3:16/integer, <<"bar">>/binary>>},
+                       {25, <<3:16/integer, <<"baz">>/binary>>}, {26, <<3:16/integer, <<"qux">>/binary>>}],
+    ?assertEqual(EncodedMsgsSeqs, EncodedMessagesWithSequenceNumbers).
 
 -endif.
 
