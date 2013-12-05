@@ -5,3 +5,5 @@ deps
 *.beam
 *.plt
 *.swp
+rebar
+

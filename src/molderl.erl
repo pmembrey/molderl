@@ -1,44 +1,69 @@
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -module(molderl).
 -behaviour(gen_server).
--define(SERVER, ?MODULE).
--export([start_link/0,init/1,handle_call/3]).
--export([create_stream/6,send_message/2]).
+
+-export([start_link/1, create_stream/6, send_message/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
+
 -include("molderl.hrl").
- 
--record(state, { channels } ).
 
+-record(state, { streams_sup, streams = [] } ).
 
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+% gen_server API
 
+start_link(SupervisorPID) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
+create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer) ->
+    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
 
+send_message(StreamName, Message) ->
+    gen_server:cast(?MODULE, {send, StreamName, Message}).
 
+% gen_server's callbacks
 
+init(SupervisorPID) ->
 
+    % remind yourself to start molderl_stream_supersup
+    self() ! {start_molderl_stream_supersup, SupervisorPID},
 
+    {ok, #state{}}.
 
+handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer},_From,State) ->
+    case lists:member(StreamName, State#state.streams) of
+        true ->
+            {reply, {error, already_exist}, State};
+        false ->
+            Spec = ?CHILD(make_ref(),
+                          molderl_stream_sup,
+                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer],
+                          transient,
+                          supervisor),
+            case supervisor:start_child(State#state.streams_sup, Spec) of
+                {ok, _Pid} ->
+                    {reply, ok, State#state{streams=[StreamName|State#state.streams]}};
+                {error, Error} ->
+                    {reply, {error, Error},  State}
+            end
+    end.
 
-init(_Args) ->
-    State = #state { channels = []},
-    {ok,State}.
-    
+handle_cast({send, StreamName, Message}, State) ->
+    molderl_stream:send(StreamName, Message),
+    {noreply, State}.
 
+handle_info({start_molderl_stream_supersup, SupervisorPID}, State) ->
+    Spec = ?CHILD(molderl_stream_supersup, molderl_stream_supersup, [], permanent, supervisor),
+    case supervisor:start_child(SupervisorPID, Spec) of
+        {ok, StreamsSup} ->
+            {noreply, State#state{streams_sup=StreamsSup}};
+        {error, {already_started, StreamsSup}}->
+            {noreply, State#state{streams_sup=StreamsSup}}
+    end.
 
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
-handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
-    spawn_link(molderl_stream,init,[StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer]),
-    {reply,ok,State}.
-
-
-
-create_stream(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer}).
-
-send_message(StreamProcessName,Message) ->
-    StreamProcessName ! {send,Message},
+terminate(normal, _State) ->
     ok.
+

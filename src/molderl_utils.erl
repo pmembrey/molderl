@@ -1,43 +1,44 @@
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -module(molderl_utils).
--export([gen_heartbeat/2,gen_endofsession/2,gen_streamname/1,gen_messagepacket/3,gen_messagepacket_without_seqnum/3]).
+-export([gen_heartbeat/2, gen_endofsession/2,
+         gen_streamname/1, gen_messagepacket/3,
+         gen_messagepacket_without_seqnum/3]).
 -export([message_length/2]).
 -include("molderl.hrl").
-
 
 %% ------------------------------
 %% Generates a Heart Beat packet.
 %% ------------------------------
 gen_heartbeat(StreamName,NextSeq) ->
-  <<StreamName/binary,NextSeq:64/big-integer,?HEARTBEAT:16/big-integer>>.
+    <<StreamName/binary,NextSeq:64/big-integer,?HEARTBEAT:16/big-integer>>.
 
 %% -----------------------------------
 %% Generates an End Of Session packet.
 %% -----------------------------------
 gen_endofsession(StreamName,NextSeq) ->
-  <<StreamName/binary,NextSeq:64/big-integer,?END_OF_SESSION:16/big-integer>>.
-
+    <<StreamName/binary,NextSeq:64/big-integer,?END_OF_SESSION:16/big-integer>>.
 
 %% ---------------------------------------------
 %% Takes a stream name as either a list, binary
 %% or an integer. It then converts to a binary
 %% that is right padded with spaces (ala NASDAQ)
 %% ---------------------------------------------
-gen_streamname(StreamName) when is_binary(StreamName) == true ->
-  gen_streamname(binary_to_list(StreamName));
-gen_streamname(StreamName) when is_integer(StreamName) == true ->
-  gen_streamname(integer_to_list(StreamName));
-gen_streamname(StreamName) when is_list(StreamName) == true ->
-  %First take the first 10 characters
-  case length(StreamName) > 10 of
-    true ->  {FirstTen,_TheRest} = lists:split(10,StreamName);
-    false -> FirstTen = StreamName
-  end,
-  % Convert to a binary
-  binary_padder(list_to_binary(FirstTen)).
+gen_streamname(StreamName) when is_atom(StreamName) ->
+    gen_streamname(atom_to_list(StreamName));
+gen_streamname(StreamName) when is_binary(StreamName) ->
+    gen_streamname(binary_to_list(StreamName));
+gen_streamname(StreamName) when is_integer(StreamName) ->
+    gen_streamname(integer_to_list(StreamName));
+gen_streamname(StreamName) when is_list(StreamName), length(StreamName) > 10 ->
+    %First take the first 10 characters
+    {FirstTen,_TheRest} = lists:split(10,StreamName),
+    binary_padder(list_to_binary(FirstTen));
+gen_streamname(StreamName) when is_list(StreamName) ->
+    binary_padder(list_to_binary(StreamName)).
 
 %% --------------------------------------------
 %% Takes a binary and pads it out to ten bytes.
@@ -45,52 +46,44 @@ gen_streamname(StreamName) when is_list(StreamName) == true ->
 %% Doesn't handle binaries larger than 10, but
 %% should never get called for those ;-)
 %% --------------------------------------------
+binary_padder(BinaryToPad) when byte_size(BinaryToPad) < 10 ->
+    binary_padder(<<BinaryToPad/binary,16#20:8/big-integer>>);
 binary_padder(BinaryToPad) ->
-  case byte_size(BinaryToPad) < 10 of
-    true -> binary_padder(<<BinaryToPad/binary,16#20:8/big-integer>>);
-    false -> BinaryToPad
-  end.
+    BinaryToPad.
 
 %% -------------------------------------------------
 %% Generates a message packet. This takes the stream
-%% name, the next sequence number and a message (or 
+%% name, the next sequence number and a message (or
 %% list of messages). It returns a completed MOLD64
 %% packet as well as the next sequence number. This
 %% is needed for generating the next message in the
 %% stream.
 %% -------------------------------------------------
-gen_messagepacket(StreamName,NextSeq,Message) when is_list(Message) == false ->
-    gen_messagepacket(StreamName,NextSeq,[Message]);
-gen_messagepacket(StreamName,NextSeq,Messages) ->
-  EncodedMessages = lists:map(fun encode_message/1,Messages),
-  {EncodedMessagesWithSequenceNumbers,_NextSeq} = lists:mapfoldl(fun encode_message_with_sequence_numbers/2,NextSeq,EncodedMessages),
-  % Next Serial number is...
-  Count = length(EncodedMessages),
-  NewNextSeq = NextSeq + Count,
-  FlattenedMessages = list_to_binary(lists:flatten(EncodedMessages)),
-  PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
-  {NewNextSeq,PacketPayload,EncodedMessagesWithSequenceNumbers}.
+gen_messagepacket(StreamName, NextSeq, Message) when not is_list(Message) ->
+    gen_messagepacket(StreamName, NextSeq, [Message]);
+gen_messagepacket(StreamName, NextSeq, Messages) ->
+    Lambda = fun(Msg, I) -> {encode_message(Msg), I+1} end,
+    {EncodedMsgs, Count} = lists:mapfoldl(Lambda, 0, Messages),
+    EncodedMsgsBinary = list_to_binary(EncodedMsgs),
+    Payload = <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>,
+    EncodedMsgsWithSeqNum = lists:zip(lists:seq(NextSeq, NextSeq+Count-1), EncodedMsgs),
+    {NextSeq+Count, Payload, EncodedMsgsWithSeqNum}.
 
 gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
-  Count = length(Messages),
-  FlattenedMessages = list_to_binary(lists:flatten(Messages)),
-  PacketPayload = <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>,
-  PacketPayload.
-
-
-encode_message_with_sequence_numbers(Message,Accumulator) ->
-  {{Accumulator,Message},Accumulator+1}.
+    Count = length(Messages),
+    FlattenedMessages = list_to_binary(lists:flatten(Messages)),
+    <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>.
 
 %% ------------------------------------------------
 %% Takes a message as either a list of a binary and
 %% then adds the length header needed by MOLD64. It
 %% returns the binary encoded message.
 %% ------------------------------------------------
-encode_message(Message) when is_list(Message) == true ->
-  encode_message(list_to_binary(Message));
-encode_message(Message) when is_binary(Message) == true ->
-  Length = byte_size(Message),
-  <<Length:16/big-integer,Message/binary>>.
+encode_message(Message) when is_list(Message) ->
+    encode_message(list_to_binary(Message));
+encode_message(Message) when is_binary(Message) ->
+    Length = byte_size(Message),
+    <<Length:16/big-integer,Message/binary>>.
 
 %% ------------------------------------------------
 %% Given a parent message's length and a child
@@ -135,7 +128,6 @@ gen_streamname_long_list_test() ->
 gen_streamname_ten_list_test() ->
   ?assert(gen_streamname("helloworld") == <<"helloworld">>).
 
-
 %% -------------------------------
 %% Tests for Heart Beat generation
 %% -------------------------------
@@ -159,4 +151,29 @@ message_length_test() ->
     ?assertEqual(3, message_length(1,<<>>)),
     ?assertEqual(6, message_length(1,<<"f","o","o">>)).
 
+%% -----------------------------------
+%% Tests for encoding messages
+%% -----------------------------------
+encode_message_test() ->
+    ?assertEqual(encode_message(<<"foo">>), <<3:16/big-integer, <<"foo">>/binary>>),
+    ?assertEqual(encode_message("foo"), <<3:16/big-integer, <<"foo">>/binary>>).
+
+%% -----------------------------------
+%% Tests for generating message packet
+%% -----------------------------------
+gen_messagepacket_test() ->
+    Msgs = ["foo", "bar", "baz", "qux"],
+    Result = gen_messagepacket(<<"foo">>, 23, Msgs),
+    {NextSeq, PacketPayload, EncodedMessagesWithSequenceNumbers} = Result,
+    ?assertEqual(27, NextSeq),
+    EncodedMsgs = [<<3:16/integer, <<"foo">>/binary>>, <<3:16/integer, <<"bar">>/binary>>,
+                   <<3:16/integer, <<"baz">>/binary>>, <<3:16/integer, <<"qux">>/binary>>],
+    FlattenedMsgs = list_to_binary(lists:flatten(EncodedMsgs)),
+    ExpectedPayload = <<<<"foo">>/binary, 23:64/big-integer, 4:16/big-integer, FlattenedMsgs/binary>>,
+    ?assertEqual(ExpectedPayload, PacketPayload),
+    EncodedMsgsSeqs = [{23, <<3:16/integer, <<"foo">>/binary>>}, {24, <<3:16/integer, <<"bar">>/binary>>},
+                       {25, <<3:16/integer, <<"baz">>/binary>>}, {26, <<3:16/integer, <<"qux">>/binary>>}],
+    ?assertEqual(EncodedMsgsSeqs, EncodedMessagesWithSequenceNumbers).
+
 -endif.
+

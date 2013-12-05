@@ -1,5 +1,5 @@
 
--module(molderl_sup).
+-module(molderl_stream_supersup).
 
 -behaviour(supervisor).
 
@@ -8,8 +8,6 @@
 
 %% Supervisor callbacks
 -export([init/1]).
-
--include("molderl.hrl").
 
 %% ===================================================================
 %% API functions
@@ -23,6 +21,6 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    MoldServer = ?CHILD(molderl, molderl, [self()], permanent, worker),
-    {ok, { {one_for_all, 5, 10}, [MoldServer]} }.
+    % molderl_stream_sup childs will be created dynamically
+    {ok, {{one_for_one, 5, 10}, []}}.
 
