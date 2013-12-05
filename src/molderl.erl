@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/6, send_message/2]).
+-export([start_link/1, create_stream/5, send_message/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -15,11 +15,11 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
-create_stream(StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer}).
+create_stream(StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
+    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer}).
 
-send_message(StreamProcessName,Message) ->
-    gen_server:cast(?MODULE,{send,StreamProcessName,Message}).
+send_message(StreamName, Message) ->
+    gen_server:cast(?MODULE, {send, StreamName, Message}).
 
 % gen_server's callbacks
 
@@ -30,26 +30,26 @@ init(SupervisorPID) ->
 
     {ok, #state{}}.
 
-handle_call({create_stream,StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
-    case lists:member(StreamProcessName, State#state.streams) of
+handle_call({create_stream,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
+    case lists:member(StreamName, State#state.streams) of
         true ->
             {reply, {error, already_exist}, State};
         false ->
             Spec = ?CHILD(make_ref(),
                           molderl_stream_sup,
-                          [StreamProcessName,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer],
+                          [StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer],
                           transient,
                           supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
                 {ok, _Pid} ->
-                    {reply, ok, State#state{streams=[StreamProcessName|State#state.streams]}};
+                    {reply, ok, State#state{streams=[StreamName|State#state.streams]}};
                 {error, Error} ->
                     {reply, {error, Error},  State}
             end
     end.
 
-handle_cast({send, StreamProcessName, Message}, State) ->
-    molderl_stream:send(StreamProcessName, Message),
+handle_cast({send, StreamName, Message}, State) ->
+    molderl_stream:send(StreamName, Message),
     {noreply, State}.
 
 handle_info({start_molderl_stream_supersup, SupervisorPID}, State) ->

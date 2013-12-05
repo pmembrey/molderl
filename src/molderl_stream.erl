@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/7, prod/1, send/2]).
+-export([start_link/6, prod/1, send/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -21,9 +21,9 @@
                  recovery_service       % Pid of the recovery service message
                }).
 
-start_link(SupervisorPid, StreamProcessName, StreamName, Destination,
+start_link(SupervisorPid, StreamName, Destination,
            DestinationPort, IPAddressToSendFrom, Timer) ->
-    gen_server:start_link({local, StreamProcessName},
+    gen_server:start_link({local, StreamName},
                           ?MODULE,
                           [SupervisorPid, StreamName, Destination,
                            DestinationPort, IPAddressToSendFrom, Timer],

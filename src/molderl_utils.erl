@@ -27,6 +27,8 @@ gen_endofsession(StreamName,NextSeq) ->
 %% or an integer. It then converts to a binary
 %% that is right padded with spaces (ala NASDAQ)
 %% ---------------------------------------------
+gen_streamname(StreamName) when is_atom(StreamName) ->
+    gen_streamname(atom_to_list(StreamName));
 gen_streamname(StreamName) when is_binary(StreamName) ->
     gen_streamname(binary_to_list(StreamName));
 gen_streamname(StreamName) when is_integer(StreamName) ->
