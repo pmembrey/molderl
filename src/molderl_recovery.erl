@@ -7,36 +7,36 @@
 
 -behaviour(gen_server).
 
--export([start_link/3, store/2]).
+-export([start_link/4, store/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
 -define(STATE,State#state).
 
 -record(state, { 
-                socket, 		% Socket to send data on
-                port,			% Port to send data to
-                stream_name,	% Stream name for encoding the response
-                table_id,		% ETS table with the replay data in it
-                packet_size     % maximum packet size of messages in bytes
+                socket,           % Socket to send data on
+                destination_port, % Port to send data to
+                stream_name,      % Stream name for encoding the response
+                table_id,         % ETS table with the replay data in it
+                packet_size       % maximum packet size of messages in bytes
                }).
 
-start_link(StreamName, Port, PacketSize) ->
-    gen_server:start_link(?MODULE, [StreamName, Port, PacketSize], []).
+start_link(StreamName, DestinationPort, RecoveryPort, PacketSize) ->
+    gen_server:start_link(?MODULE, [StreamName, DestinationPort, RecoveryPort, PacketSize], []).
 
 store(Pid, Item) ->
     gen_server:cast(Pid, {store, Item}).
 
-init([StreamName, Port, PacketSize]) ->
+init([StreamName, DestinationPort, RecoveryPort, PacketSize]) ->
 
-    {ok, Socket} = gen_udp:open(Port + 1, [binary, {active,true}]),
+    {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,true}]),
 
     State = #state {
-                    socket      = Socket,
-                    port        = Port,
-                    stream_name = StreamName,
-                    table_id    = ets:new(recovery_table, [ordered_set]),
-                    packet_size = PacketSize
+                    socket           = Socket,
+                    destination_port = DestinationPort,
+                    stream_name      = StreamName,
+                    table_id         = ets:new(recovery_table, [ordered_set]),
+                    packet_size      = PacketSize
                    },
     {ok, State}.
 
@@ -56,7 +56,7 @@ handle_info({udp, _Client, IP, _Port, Message}, State) ->
     TruncatedMessages = truncate_messages(Messages, ?STATE.packet_size),
     % Generate a MOLD packet
     EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
-    gen_udp:send(?STATE.socket,IP,?STATE.port,EncodedMessage),
+    gen_udp:send(?STATE.socket,IP,?STATE.destination_port,EncodedMessage),
     {noreply, State}.
 
 handle_call(Msg, _From, State) ->

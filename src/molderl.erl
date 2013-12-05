@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/5, send_message/2]).
+-export([start_link/1, create_stream/6, send_message/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -15,8 +15,8 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
-create_stream(StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer}).
+create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer) ->
+    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
 
 send_message(StreamName, Message) ->
     gen_server:cast(?MODULE, {send, StreamName, Message}).
@@ -30,14 +30,14 @@ init(SupervisorPID) ->
 
     {ok, #state{}}.
 
-handle_call({create_stream,StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer},_From,State) ->
+handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer},_From,State) ->
     case lists:member(StreamName, State#state.streams) of
         true ->
             {reply, {error, already_exist}, State};
         false ->
             Spec = ?CHILD(make_ref(),
                           molderl_stream_sup,
-                          [StreamName,Destination,DestinationPort,IPAddressToSendFrom,Timer],
+                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer],
                           transient,
                           supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of

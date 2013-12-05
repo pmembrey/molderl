@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/6, prod/1, send/2]).
+-export([start_link/7, prod/1, send/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -21,12 +21,12 @@
                  recovery_service       % Pid of the recovery service message
                }).
 
-start_link(SupervisorPid, StreamName, Destination,
-           DestinationPort, IPAddressToSendFrom, Timer) ->
+start_link(SupervisorPid, StreamName, Destination, DestinationPort,
+           RecoveryPort, IPAddressToSendFrom, Timer) ->
     gen_server:start_link({local, StreamName},
                           ?MODULE,
-                          [SupervisorPid, StreamName, Destination,
-                           DestinationPort, IPAddressToSendFrom, Timer],
+                          [SupervisorPid, StreamName, Destination, DestinationPort,
+                           RecoveryPort, IPAddressToSendFrom, Timer],
                           []).
 
 send(Pid, Message) ->
@@ -35,13 +35,13 @@ send(Pid, Message) ->
 prod(Pid) ->
     gen_server:cast(Pid, prod).
 
-init([SupervisorPID, StreamName, Destination,
-      DestinationPort, IPAddressToSendFrom, ProdInterval]) ->
+init([SupervisorPID, StreamName, Destination, DestinationPort,
+      RecoveryPort, IPAddressToSendFrom, ProdInterval]) ->
 
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
 
     % send yourself a reminder to start recovery & prodder
-    self() ! {initialize, SupervisorPID, MoldStreamName, DestinationPort, ?PACKET_SIZE, ProdInterval},
+    self() ! {initialize, SupervisorPID, MoldStreamName, RecoveryPort, ?PACKET_SIZE, ProdInterval},
 
     {ok, Socket} = gen_udp:open(0, [binary,
                                     {broadcast, true},
@@ -91,10 +91,11 @@ handle_cast(prod, State) -> % Timer triggered a send
 handle_info(timeout, State) ->
     send_heartbeat(State),
     {noreply, State};
-handle_info({initialize, SupervisorPID, MoldStreamName, DestinationPort, PacketSize, ProdInterval}, State) ->
+handle_info({initialize, SupervisorPID, MoldStreamName, RecoveryPort, PacketSize, ProdInterval}, State) ->
     ProdderSpec = ?CHILD(make_ref(), molderl_prodder, [self(), ProdInterval], transient, worker),
     supervisor:start_child(SupervisorPID, ProdderSpec),
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [MoldStreamName, DestinationPort, PacketSize], transient, worker),
+    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [MoldStreamName, ?STATE.destination_port,
+                                                         RecoveryPort, PacketSize], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}}.
 
