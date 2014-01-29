@@ -43,18 +43,25 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
     % send yourself a reminder to start recovery & prodder
     self() ! {initialize, SupervisorPID, MoldStreamName, RecoveryPort, ?PACKET_SIZE, ProdInterval},
 
-    {ok, Socket} = gen_udp:open(0, [binary,
+    Connection = gen_udp:open(0, [binary,
                                     {broadcast, true},
                                     {ip, IPAddressToSendFrom},
                                     {add_membership, {Destination, IPAddressToSendFrom}},
                                     {multicast_if, IPAddressToSendFrom}]),
 
-    State = #state{stream_name = MoldStreamName,
-                   destination = Destination,
-                   socket = Socket,
-                   destination_port = DestinationPort
-                  },
-    {ok, State, 1000}. % third element is timeout
+    case Connection of
+        {ok, Socket} ->
+            State = #state{stream_name = MoldStreamName,
+                           destination = Destination,
+                           socket = Socket,
+                           destination_port = DestinationPort
+                          },
+            {ok, State, 1000}; % third element is timeout
+        {error, Reason} ->
+            io:format("Unable to open UDP socket on ~p because ~p. Aborting.~n",
+                      [IPAddressToSendFrom, inet:format_error(Reason)]),
+            {stop, Reason}
+    end.
 
 handle_cast({send, Message}, State) ->
     MessageLength = molderl_utils:message_length(?STATE.message_length,Message),
