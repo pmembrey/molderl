@@ -15,7 +15,7 @@ start() ->
     io:format(user,"Initiating tests...~n",[]),
     application:start(molderl),
     [].
- 
+
 stop(_) ->
     io:format(user,"Cleaning up...~n",[]),
     application:stop(molderl).
