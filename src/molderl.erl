@@ -31,10 +31,11 @@ init(SupervisorPID) ->
     {ok, #state{}}.
 
 handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer},_From,State) ->
-    case lists:member(StreamName, State#state.streams) of
-        true ->
-            {reply, {error, already_exist}, State};
-        false ->
+    % before creating MOLD stream, make sure there's no stream name, destination address or recovery port conflict
+    case {lists:keymember(StreamName,1,State#state.streams),
+          lists:keymember({Destination,DestinationPort},2,State#state.streams),
+          lists:keymember(RecoveryPort,3,State#state.streams)} of
+        {false,false,false} -> % stream name, destination addr and recovery port available
             Spec = ?CHILD(make_ref(),
                           molderl_stream_sup,
                           [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer],
@@ -42,10 +43,16 @@ handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,I
                           supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
                 {ok, _Pid} ->
-                    {reply, ok, State#state{streams=[StreamName|State#state.streams]}};
+                    {reply, ok, State#state{streams=[{StreamName,{Destination,DestinationPort},RecoveryPort}|State#state.streams]}};
                 {error, Error} ->
                     {reply, {error, Error},  State}
-            end
+            end;
+        {true,_,_} ->
+            {reply, {error, already_exist}, State};
+        {_,true,_} ->
+            {reply, {error, eaddrinuse}, State};
+        {_,_,true} ->
+            {reply, {error, eaddrinuse}, State}
     end.
 
 handle_cast({send, StreamName, Message}, State) ->
