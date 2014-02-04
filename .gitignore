@@ -6,5 +6,5 @@ deps
 *.plt
 *.swp
 rebar
-rel/*/*
+rel/*
 
