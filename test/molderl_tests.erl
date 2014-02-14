@@ -29,9 +29,15 @@ instantiator(_) ->
     BazRecPort = 10000,
 
     {ok, [{LocalHostIP,_,_}|_]} = inet:getif(),
-    {ok, FooSocket} = gen_udp:open(FooPort, [binary]),
-    {ok, BarSocket} = gen_udp:open(BarPort, [binary]),
-    {ok, BazSocket} = gen_udp:open(BazPort, [binary]),
+
+    % set up UDP multicast listen sockets
+    {ok, FooSocket} = gen_udp:open(FooPort, [binary, {reuseaddr, true}]),
+    inet:setopts(FooSocket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
+    {ok, BarSocket} = gen_udp:open(BarPort, [binary, {reuseaddr, true}]),
+    inet:setopts(BarSocket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
+    {ok, BazSocket} = gen_udp:open(BazPort, [binary, {reuseaddr, true}]),
+    inet:setopts(BazSocket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
+
     CreateResult1 = molderl:create_stream(bar,?MCAST_GROUP_IP,BarPort,BarRecPort,LocalHostIP,100),
     CreateResult2 = molderl:create_stream(baz,?MCAST_GROUP_IP,BazPort,BazRecPort,LocalHostIP,200),
     CreateResult3 = molderl:create_stream(foo,?MCAST_GROUP_IP,FooPort,FooRecPort,LocalHostIP,100),
