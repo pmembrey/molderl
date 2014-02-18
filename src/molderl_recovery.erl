@@ -7,7 +7,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/4, store/2]).
+-export([start_link/3, store/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -15,25 +15,23 @@
 
 -record(state, { 
                 socket,           % Socket to send data on
-                destination_port, % Port to send data to
                 stream_name,      % Stream name for encoding the response
                 table_id,         % ETS table with the replay data in it
                 packet_size       % maximum packet size of messages in bytes
                }).
 
-start_link(StreamName, DestinationPort, RecoveryPort, PacketSize) ->
-    gen_server:start_link(?MODULE, [StreamName, DestinationPort, RecoveryPort, PacketSize], []).
+start_link(StreamName, RecoveryPort, PacketSize) ->
+    gen_server:start_link(?MODULE, [StreamName, RecoveryPort, PacketSize], []).
 
 store(Pid, Item) ->
     gen_server:cast(Pid, {store, Item}).
 
-init([StreamName, DestinationPort, RecoveryPort, PacketSize]) ->
+init([StreamName, RecoveryPort, PacketSize]) ->
 
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,true}]),
 
     State = #state {
                     socket           = Socket,
-                    destination_port = DestinationPort,
                     stream_name      = StreamName,
                     table_id         = ets:new(recovery_table, [ordered_set]),
                     packet_size      = PacketSize
@@ -44,7 +42,7 @@ handle_cast({store, Item}, State) ->
     ets:insert(?STATE.table_id, Item),
     {noreply, State}.
 
-handle_info({udp, _Client, IP, _Port, Message}, State) ->
+handle_info({udp, _Client, IP, Port, Message}, State) ->
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
     io:format("Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p~n",
               [IP,SessionName,SequenceNumber,Count]),
@@ -56,7 +54,7 @@ handle_info({udp, _Client, IP, _Port, Message}, State) ->
     TruncatedMessages = truncate_messages(Messages, ?STATE.packet_size),
     % Generate a MOLD packet
     EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
-    gen_udp:send(?STATE.socket,IP,?STATE.destination_port,EncodedMessage),
+    gen_udp:send(?STATE.socket,IP,Port,EncodedMessage),
     {noreply, State}.
 
 handle_call(Msg, _From, State) ->
