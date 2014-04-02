@@ -11,6 +11,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-compile([{parse_transform, lager_transform}]).
+
 -define(STATE,State#state).
 
 -record(state, { 
@@ -44,7 +46,7 @@ handle_cast({store, Item}, State) ->
 
 handle_info({udp, _Client, IP, Port, Message}, State) ->
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
-    io:format("Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p~n",
+    lager:info("Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p~n",
               [IP,SessionName,SequenceNumber,Count]),
     % Get messages from recovery table
     % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
@@ -58,7 +60,7 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
     {noreply, State}.
 
 handle_call(Msg, _From, State) ->
-    io:format("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
+    lager:warning("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->

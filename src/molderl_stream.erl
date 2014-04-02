@@ -9,6 +9,8 @@
 
 -include("molderl.hrl").
 
+-compile([{parse_transform, lager_transform}]).
+
 -define(STATE,State#state).
 
 -record(state, { stream_name,           % Name of the stream encoded for MOLD64 (i.e. padded binary)
@@ -58,7 +60,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                           },
             {ok, State, 1000}; % third element is timeout
         {error, Reason} ->
-            io:format("Unable to open UDP socket on ~p because ~p. Aborting.~n",
+            lager:error("Unable to open UDP socket on ~p because ~p. Aborting.~n",
                       [IPAddressToSendFrom, inet:format_error(Reason)]),
             {stop, Reason}
     end.
@@ -106,7 +108,7 @@ handle_info({initialize, SupervisorPID, MoldStreamName, RecoveryPort, PacketSize
     {noreply, ?STATE{recovery_service=RecoveryProcess}}.
 
 handle_call(Msg, _From, State) ->
-    io:format("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
+    lager:warning("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
