@@ -45,6 +45,7 @@ handle_cast({store, Item}, State) ->
     {noreply, State}.
 
 handle_info({udp, _Client, IP, Port, Message}, State) ->
+    TS = os:timestamp(),
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
     lager:info("Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p~n",
               [IP,SessionName,SequenceNumber,Count]),
@@ -57,6 +58,10 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
     % Generate a MOLD packet
     EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
     gen_udp:send(?STATE.socket,IP,Port,EncodedMessage),
+
+    statsderl:timing_now("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".recovery_request.latency", TS, 0.01),
+    statsderl:increment("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".recovery_request.received", 1, 0.01),
+
     {noreply, State}.
 
 handle_call(Msg, _From, State) ->

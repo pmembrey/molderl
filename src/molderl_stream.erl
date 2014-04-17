@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/7, prod/1, send/2]).
+-export([start_link/7, prod/1, send/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -20,7 +20,8 @@
                  destination_port,      % Destination port for the data
                  messages = [],         % List of messages waiting to be encoded and sent
                  message_length = 0,    % Current length of messages if they were to be encoded in a MOLD64 packet
-                 recovery_service       % Pid of the recovery service message
+                 recovery_service,      % Pid of the recovery service message
+                 start_time             % Start time of the earliest msg in a packet
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
@@ -31,8 +32,8 @@ start_link(SupervisorPid, StreamName, Destination, DestinationPort,
                            RecoveryPort, IPAddressToSendFrom, Timer],
                           []).
 
-send(Pid, Message) ->
-    gen_server:cast(Pid, {send, Message}).
+send(Pid, Message, StartTime) ->
+    gen_server:cast(Pid, {send, Message, StartTime}).
 
 prod(Pid) ->
     gen_server:cast(Pid, prod).
@@ -65,34 +66,37 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
             {stop, Reason}
     end.
 
-handle_cast({send, Message}, State) ->
-    MessageLength = molderl_utils:message_length(?STATE.message_length,Message),
+handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
+    MessageLength = molderl_utils:message_length(0, Message),
+    case MessageLength > ?PACKET_SIZE of
+        true -> % Single message is bigger than packet size, log and exit!
+            lager:error("Molderl received a single message of length ~p"
+                        ++ " which is bigger than the maximum packet size ~p",
+                        [MessageLength, ?PACKET_SIZE]),
+            {stop, single_msg_too_big, State};
+        false ->
+            {noreply, ?STATE{message_length=MessageLength, messages=[Message], start_time=StartTime}}
+    end;
+handle_cast({send, Message, _StartTime}, State) ->
     % Can we fit this in?
+    MessageLength = molderl_utils:message_length(?STATE.message_length, Message),
     case MessageLength > ?PACKET_SIZE of
         true -> % Nope we can't, send what we have and requeue
-            MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name,
-                                                     ?STATE.sequence_number,
-                                                     lists:reverse(?STATE.messages)),
-            {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
-            send_message(State, EncodedMessage),
+            {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
             molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
-            {noreply, ?STATE{message_length = molderl_utils:message_length(0,Message),
-                             messages = [Message],
-                             sequence_number = NextSequence}};
+            {noreply, ?STATE{message_length=molderl_utils:message_length(0,Message),
+                             messages=[Message],
+                             sequence_number=NextSequence}};
         false -> % Yes we can - add it to the list of messages
-            {noreply, ?STATE{message_length = MessageLength, messages = [Message|?STATE.messages]}}
+            {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end;
 handle_cast(prod, State) -> % Timer triggered a send
     case ?STATE.messages of
         [] ->
             send_heartbeat(State),
-            {noreply, ?STATE{message_length = 0, messages = []}};
+            {noreply, ?STATE{message_length=0, messages=[]}};
         _ ->
-            MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name,
-                                                     ?STATE.sequence_number,
-                                                     lists:reverse(?STATE.messages)),
-            {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
-            send_message(State,EncodedMessage),
+            {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
             molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
             {noreply, ?STATE{message_length = 0, messages = [], sequence_number = NextSequence}}
     end.
@@ -117,8 +121,13 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(normal, _State) ->
     ok.
 
-send_message(State, EncodedMessage) ->
-    gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage).
+send_packet(State) ->
+    MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
+    {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
+    ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage),
+    statsderl:timing_now("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".packet.latency", ?STATE.start_time, 0.01),
+    statsderl:increment("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".packet.sent", 1, 0.01),
+    {NextSequence, MessagesWithSequenceNumbers}.
 
 send_heartbeat(State) ->
     Heartbeat = molderl_utils:gen_heartbeat(?STATE.stream_name, ?STATE.sequence_number),

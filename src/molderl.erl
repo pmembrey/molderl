@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/6, send_message/2]).
+-export([start_link/1, create_stream/6, send_message/2, send_message/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -19,7 +19,13 @@ create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSen
     gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
 
 send_message(StreamName, Message) ->
-    gen_server:cast(?MODULE, {send, StreamName, Message}).
+    gen_server:cast(?MODULE, {send, StreamName, Message, os:timestamp()}).
+
+% Third argument, StartTime, is only for the user to
+% manually supply a start time {MacroSecs, Secs, MicroSecs}
+% on which the latency published by StatsD will be based on
+send_message(StreamName, Message, StartTime) ->
+    gen_server:cast(?MODULE, {send, StreamName, Message, StartTime}).
 
 % gen_server's callbacks
 
@@ -55,8 +61,8 @@ handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,I
             {reply, {error, eaddrinuse}, State}
     end.
 
-handle_cast({send, StreamName, Message}, State) ->
-    molderl_stream:send(StreamName, Message),
+handle_cast({send, StreamName, Message, StartTime}, State) ->
+    molderl_stream:send(StreamName, Message, StartTime),
     {noreply, State}.
 
 handle_info({start_molderl_stream_supersup, SupervisorPID}, State) ->

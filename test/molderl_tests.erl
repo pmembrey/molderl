@@ -61,7 +61,7 @@ instantiator(_) ->
     BazMsgs = receive_messages("baz", BazSocket),
     FooMsgs = receive_messages("foo", FooSocket),
     BarMsgs = receive_messages("bar", BarSocket),
-    BigMsg = list_to_binary([random:uniform(100) || _ <- lists:seq(1, 2*?PACKET_SIZE)]),
+    BigMsg = list_to_binary([random:uniform(100) || _ <- lists:seq(1, ?PACKET_SIZE-200)]),
     molderl:send_message(baz, BigMsg),
     [{_,ExpectedBigMsg}] = receive_messages("baz", BazSocket),
 
