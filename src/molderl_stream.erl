@@ -21,7 +21,9 @@
                  messages = [],         % List of messages waiting to be encoded and sent
                  message_length = 0,    % Current length of messages if they were to be encoded in a MOLD64 packet
                  recovery_service,      % Pid of the recovery service message
-                 start_time             % Start time of the earliest msg in a packet
+                 start_time,            % Start time of the earliest msg in a packet
+                 statsd_latency_key,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                 statsd_count_key       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
@@ -57,7 +59,9 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
             State = #state{stream_name = MoldStreamName,
                            destination = Destination,
                            socket = Socket,
-                           destination_port = DestinationPort
+                           destination_port = DestinationPort,
+                           statsd_latency_key = "molderl." ++ binary_to_list(StreamName) ++ ".packet.latency",
+                           statsd_count_key   = "molderl." ++ binary_to_list(StreamName) ++ ".packet.sent"
                           },
             {ok, State, 1000}; % third element is timeout
         {error, Reason} ->
@@ -125,8 +129,8 @@ send_packet(State) ->
     MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
     {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
     ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage),
-    statsderl:timing_now("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".packet.latency", ?STATE.start_time, 0.01),
-    statsderl:increment("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".packet.sent", 1, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key, ?STATE.start_time, 0.01),
+    statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
     {NextSequence, MessagesWithSequenceNumbers}.
 
 send_heartbeat(State) ->

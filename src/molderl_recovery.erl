@@ -15,11 +15,13 @@
 
 -define(STATE,State#state).
 
--record(state, { 
-                socket,           % Socket to send data on
-                stream_name,      % Stream name for encoding the response
-                table_id,         % ETS table with the replay data in it
-                packet_size       % maximum packet size of messages in bytes
+-record(state, {
+                socket,             % Socket to send data on
+                stream_name,        % Stream name for encoding the response
+                table_id,           % ETS table with the replay data in it
+                packet_size,        % maximum packet size of messages in bytes
+                statsd_latency_key, % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                statsd_count_key    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                }).
 
 start_link(StreamName, RecoveryPort, PacketSize) ->
@@ -33,10 +35,12 @@ init([StreamName, RecoveryPort, PacketSize]) ->
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,true}]),
 
     State = #state {
-                    socket           = Socket,
-                    stream_name      = StreamName,
-                    table_id         = ets:new(recovery_table, [ordered_set]),
-                    packet_size      = PacketSize
+                    socket             = Socket,
+                    stream_name        = StreamName,
+                    table_id           = ets:new(recovery_table, [ordered_set]),
+                    packet_size        = PacketSize,
+                    statsd_latency_key = "molderl." ++ binary_to_list(StreamName) ++ ".recovery_request.latency",
+                    statsd_count_key   = "molderl." ++ binary_to_list(StreamName) ++ ".recovery_request.received"
                    },
     {ok, State}.
 
@@ -59,8 +63,8 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
     EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
     gen_udp:send(?STATE.socket,IP,Port,EncodedMessage),
 
-    statsderl:timing_now("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".recovery_request.latency", TS, 0.01),
-    statsderl:increment("molderl." ++ binary_to_list(?STATE.stream_name) ++ ".recovery_request.received", 1, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
+    statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
 
     {noreply, State}.
 
