@@ -46,7 +46,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
 
     % send yourself a reminder to start recovery & prodder
-    self() ! {initialize, SupervisorPID, MoldStreamName, RecoveryPort, ?PACKET_SIZE, ProdInterval},
+    self() ! {initialize, SupervisorPID, StreamName, RecoveryPort, ?PACKET_SIZE, ProdInterval},
 
     Connection = gen_udp:open(0, [binary,
                                     {broadcast, true},
@@ -60,8 +60,8 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            destination = Destination,
                            socket = Socket,
                            destination_port = DestinationPort,
-                           statsd_latency_key = "molderl." ++ binary_to_list(StreamName) ++ ".packet.latency",
-                           statsd_count_key   = "molderl." ++ binary_to_list(StreamName) ++ ".packet.sent"
+                           statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".packet.latency",
+                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".packet.sent"
                           },
             {ok, State, 1000}; % third element is timeout
         {error, Reason} ->
@@ -108,10 +108,10 @@ handle_cast(prod, State) -> % Timer triggered a send
 handle_info(timeout, State) ->
     send_heartbeat(State),
     {noreply, State};
-handle_info({initialize, SupervisorPID, MoldStreamName, RecoveryPort, PacketSize, ProdInterval}, State) ->
+handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, PacketSize, ProdInterval}, State) ->
     ProdderSpec = ?CHILD(make_ref(), molderl_prodder, [self(), ProdInterval], transient, worker),
     supervisor:start_child(SupervisorPID, ProdderSpec),
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [MoldStreamName, RecoveryPort, PacketSize], transient, worker),
+    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [StreamName, RecoveryPort, PacketSize], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}}.
 

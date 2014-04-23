@@ -36,11 +36,11 @@ init([StreamName, RecoveryPort, PacketSize]) ->
 
     State = #state {
                     socket             = Socket,
-                    stream_name        = StreamName,
+                    stream_name        = molderl_utils:gen_streamname(StreamName),
                     table_id           = ets:new(recovery_table, [ordered_set]),
                     packet_size        = PacketSize,
-                    statsd_latency_key = "molderl." ++ binary_to_list(StreamName) ++ ".recovery_request.latency",
-                    statsd_count_key   = "molderl." ++ binary_to_list(StreamName) ++ ".recovery_request.received"
+                    statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
+                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"
                    },
     {ok, State}.
 
