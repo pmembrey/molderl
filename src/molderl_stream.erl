@@ -66,7 +66,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".packet.latency",
                            statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".packet.sent"
                           },
-            {ok, State, 1000}; % third element is timeout
+            {ok, State};
         {error, Reason} ->
             lager:error("Unable to open UDP socket on ~p because ~p. Aborting.~n",
                       [IPAddressToSendFrom, inet:format_error(Reason)]),
@@ -108,9 +108,6 @@ handle_cast(prod, State) -> % Timer triggered a send
             {noreply, ?STATE{message_length = 0, messages = [], sequence_number = NextSequence}}
     end.
 
-handle_info(timeout, State) ->
-    send_heartbeat(State),
-    {noreply, State};
 handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, PacketSize, ProdInterval}, State) ->
     ProdderSpec = ?CHILD(make_ref(), molderl_prodder, [self(), ProdInterval], transient, worker),
     supervisor:start_child(SupervisorPID, ProdderSpec),
