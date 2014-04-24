@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/7, prod/1, send/3]).
+-export([start_link/7, prod/1, send/2, send/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -33,6 +33,9 @@ start_link(SupervisorPid, StreamName, Destination, DestinationPort,
                           [SupervisorPid, StreamName, Destination, DestinationPort,
                            RecoveryPort, IPAddressToSendFrom, Timer],
                           []).
+
+send(Pid, Message) ->
+    gen_server:cast(Pid, {send, Message, os:timestamp()}).
 
 send(Pid, Message, StartTime) ->
     gen_server:cast(Pid, {send, Message, StartTime}).
