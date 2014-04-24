@@ -85,7 +85,7 @@ handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
         false ->
             {noreply, ?STATE{message_length=MessageLength, messages=[Message], start_time=StartTime}}
     end;
-handle_cast({send, Message, _StartTime}, State) ->
+handle_cast({send, Message, StartTime}, State) ->
     % Can we fit this in?
     MessageLength = molderl_utils:message_length(?STATE.message_length, Message),
     case MessageLength > ?PACKET_SIZE of
@@ -97,7 +97,8 @@ handle_cast({send, Message, _StartTime}, State) ->
             {noreply, ?STATE{message_length=molderl_utils:message_length(0,Message),
                              messages=[Message],
                              sequence_number=NextSequence,
-                             timer_ref=TRef}};
+                             timer_ref=TRef,
+                             start_time=StartTime}};
         false -> % Yes we can - add it to the list of messages
             {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end.
