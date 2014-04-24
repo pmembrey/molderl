@@ -24,7 +24,8 @@
                  start_time,            % Start time of the earliest msg in a packet
                  prod_interval,         % Maximum interval at which either partial packets or heartbeats should be sent
                  timer_ref,             % reference to timer used for hearbeats and flush interval
-                 statsd_latency_key,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                 statsd_latency_key_in,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                 statsd_latency_key_out,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                  statsd_count_key       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                }).
 
@@ -61,8 +62,9 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            destination_port = DestinationPort,
                            timer_ref = erlang:send_after(ProdInterval, self(), prod),
                            prod_interval = ProdInterval,
-                           statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".packet.latency",
-                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".packet.sent"
+                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time.in",
+                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time.out",
+                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
                           },
             {ok, State};
         {error, Reason} ->
@@ -72,6 +74,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
     end.
 
 handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
+    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.01),
     MessageLength = molderl_utils:message_length(0, Message),
     case MessageLength > ?PACKET_SIZE of
         true -> % Single message is bigger than packet size, log and exit!
@@ -83,6 +86,7 @@ handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
             {noreply, ?STATE{message_length=MessageLength, messages=[Message], start_time=StartTime}}
     end;
 handle_cast({send, Message, StartTime}, State) ->
+    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.01),
     % Can we fit this in?
     MessageLength = molderl_utils:message_length(?STATE.message_length, Message),
     case MessageLength > ?PACKET_SIZE of
@@ -133,7 +137,7 @@ send_packet(State) ->
     MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
     {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
     ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage),
-    statsderl:timing_now(?STATE.statsd_latency_key, ?STATE.start_time, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.01),
     statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
     {NextSequence, MessagesWithSequenceNumbers}.
 
