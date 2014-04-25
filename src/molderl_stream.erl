@@ -13,20 +13,20 @@
 
 -define(STATE,State#state).
 
--record(state, { stream_name,           % Name of the stream encoded for MOLD64 (i.e. padded binary)
-                 destination,           % The IP address to send / broadcast / multicast to
-                 sequence_number = 1,   % Next sequence number
-                 socket,                % The socket to send the data on
-                 destination_port,      % Destination port for the data
-                 messages = [],         % List of messages waiting to be encoded and sent
-                 message_length = 0,    % Current length of messages if they were to be encoded in a MOLD64 packet
-                 recovery_service,      % Pid of the recovery service message
-                 start_time,            % Start time of the earliest msg in a packet
-                 prod_interval,         % Maximum interval at which either partial packets or heartbeats should be sent
-                 timer_ref,             % reference to timer used for hearbeats and flush interval
-                 statsd_latency_key_in,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                 statsd_latency_key_out,    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                 statsd_count_key       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+-record(state, { stream_name,            % Name of the stream encoded for MOLD64 (i.e. padded binary)
+                 destination,            % The IP address to send / broadcast / multicast to
+                 sequence_number = 1,    % Next sequence number
+                 socket,                 % The socket to send the data on
+                 destination_port,       % Destination port for the data
+                 messages = [],          % List of messages waiting to be encoded and sent
+                 message_length = 0,     % Current length of messages if they were to be encoded in a MOLD64 packet
+                 recovery_service,       % Pid of the recovery service message
+                 start_time,             % Start time of the earliest msg in a packet
+                 prod_interval,          % Maximum interval at which either partial packets or heartbeats should be sent
+                 timer_ref,              % reference to timer used for hearbeats and flush interval
+                 statsd_latency_key_in,  % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                 statsd_latency_key_out, % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                 statsd_count_key        % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
@@ -62,8 +62,8 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            destination_port = DestinationPort,
                            timer_ref = erlang:send_after(ProdInterval, self(), prod),
                            prod_interval = ProdInterval,
-                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time.in",
-                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time.out",
+                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
+                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
                            statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
                           },
             {ok, State};
@@ -74,7 +74,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
     end.
 
 handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
-    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.1),
     MessageLength = molderl_utils:message_length(0, Message),
     case MessageLength > ?PACKET_SIZE of
         true -> % Single message is bigger than packet size, log and exit!
@@ -86,7 +86,7 @@ handle_cast({send, Message, StartTime}, State=#state{messages=[]}) ->
             {noreply, ?STATE{message_length=MessageLength, messages=[Message], start_time=StartTime}}
     end;
 handle_cast({send, Message, StartTime}, State) ->
-    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key_in, StartTime, 0.1),
     % Can we fit this in?
     MessageLength = molderl_utils:message_length(?STATE.message_length, Message),
     case MessageLength > ?PACKET_SIZE of
@@ -137,8 +137,8 @@ send_packet(State) ->
     MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
     {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
     ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage),
-    statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.01),
-    statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
+    statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
+    statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
     {NextSequence, MessagesWithSequenceNumbers}.
 
 send_heartbeat(State) ->
