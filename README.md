@@ -40,6 +40,7 @@ Send a message: `molderl:send_message(mystream,<<"helloworld">>).`
 
 If the [statsderl](https://github.com/lpgauth/statsderl) app happens to be running, molderl
 will populate the following metrics:
+
 | Type | Name |
 | ---- | ---- |
 | counter | molderl.<stream_name>.packet.sent |
@@ -47,7 +48,7 @@ will populate the following metrics:
 | counter | molderl.<stream_name>.recovery_request.received |
 | timer | molderl.<stream_name>.recovery_request.latency |
 
-* You can supply an Erlang time 3-tuple {MacroSecs, Secs, MicroSecs}
-as the third argument to molderl:send/3 if you want latency to be
+You can supply an Erlang time 3-tuple {MacroSecs, Secs, MicroSecs}
+as the third argument to molderl:send_message/3 if you want latency to be
 measured from an earlier time than when a message enters molderl.
 
