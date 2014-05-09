@@ -31,8 +31,7 @@
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
            RecoveryPort, IPAddressToSendFrom, Timer) ->
-    gen_server:start_link({local, StreamName},
-                          ?MODULE,
+    gen_server:start_link(?MODULE,
                           [SupervisorPid, StreamName, Destination, DestinationPort,
                            RecoveryPort, IPAddressToSendFrom, Timer],
                           []).

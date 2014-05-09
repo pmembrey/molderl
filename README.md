@@ -26,11 +26,17 @@ to send data using this protocol.
 
 ### Simple tests how-to
 
-Start the server: `application:start(molderl).`
+Start the server:
 
-Create a MOLD64 stream: `molderl:create_stream(mystream,{239,0,0,1},8888,8889,{192,168,0,1},5000).`
+    > application:start(molderl).
 
-Send a message: `molderl:send_message(mystream,<<"helloworld">>).`
+Create a MOLD64 stream:
+
+    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,{192,168,0,1},5000).
+
+Send a message:
+
+    > ok = molderl:send_message(StreamPID, <<"helloworld">>).
 
 ### Unit tests how-to
 
