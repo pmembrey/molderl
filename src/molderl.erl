@@ -20,9 +20,12 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
+-spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), pos_integer())
+    -> {'ok', pid()} | {'error', atom()}.
 create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer) ->
     gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
 
+-spec send_message(pid(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
     gen_server:cast(?MODULE, {send, Stream, Message, os:timestamp()}).
 
@@ -82,6 +85,8 @@ terminate(normal, _State) ->
     ok.
 
 % Make sure there's no destination address or recovery port conflict
+-spec conflict_check(inet:ip4_address(), inet:port_number(), inet:port_number(), [#stream{}])
+    -> 'ok' | {'error', atom()}.
 conflict_check(Destination, DestinationPort, RecoveryPort, Streams) ->
     case {lists:any(fun(S) -> S#stream.destination_addr =:= {Destination, DestinationPort} end, Streams),
           lists:any(fun(S) -> S#stream.recovery_port =:= RecoveryPort end, Streams)} of

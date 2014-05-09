@@ -13,12 +13,14 @@
 %% ------------------------------
 %% Generates a Heart Beat packet.
 %% ------------------------------
+-spec gen_heartbeat(binary(), pos_integer()) -> binary().
 gen_heartbeat(StreamName,NextSeq) ->
     <<StreamName/binary,NextSeq:64/big-integer,?HEARTBEAT:16/big-integer>>.
 
 %% -----------------------------------
 %% Generates an End Of Session packet.
 %% -----------------------------------
+-spec gen_endofsession(binary(), pos_integer()) -> binary().
 gen_endofsession(StreamName,NextSeq) ->
     <<StreamName/binary,NextSeq:64/big-integer,?END_OF_SESSION:16/big-integer>>.
 
@@ -27,6 +29,7 @@ gen_endofsession(StreamName,NextSeq) ->
 %% or an integer. It then converts to a binary
 %% that is right padded with spaces (ala NASDAQ)
 %% ---------------------------------------------
+-spec gen_streamname(atom() | binary() | string() | integer()) -> binary().
 gen_streamname(StreamName) when is_atom(StreamName) ->
     gen_streamname(atom_to_list(StreamName));
 gen_streamname(StreamName) when is_binary(StreamName) ->
@@ -46,6 +49,7 @@ gen_streamname(StreamName) when is_list(StreamName) ->
 %% Doesn't handle binaries larger than 10, but
 %% should never get called for those ;-)
 %% --------------------------------------------
+-spec binary_padder(binary()) -> binary().
 binary_padder(BinaryToPad) when byte_size(BinaryToPad) < 10 ->
     binary_padder(<<BinaryToPad/binary,16#20:8/big-integer>>);
 binary_padder(BinaryToPad) ->
@@ -59,6 +63,8 @@ binary_padder(BinaryToPad) ->
 %% is needed for generating the next message in the
 %% stream.
 %% -------------------------------------------------
+-spec gen_messagepacket(binary(), pos_integer(), binary() | [binary()])
+    -> {pos_integer(), binary(), [{pos_integer(), binary()}]}.
 gen_messagepacket(StreamName, NextSeq, Message) when not is_list(Message) ->
     gen_messagepacket(StreamName, NextSeq, [Message]);
 gen_messagepacket(StreamName, NextSeq, Messages) ->
@@ -69,7 +75,8 @@ gen_messagepacket(StreamName, NextSeq, Messages) ->
     EncodedMsgsWithSeqNum = lists:zip(lists:seq(NextSeq, NextSeq+Count-1), EncodedMsgs),
     {NextSeq+Count, Payload, EncodedMsgsWithSeqNum}.
 
-gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
+-spec gen_messagepacket_without_seqnum(binary(), pos_integer(), list()) -> binary().
+gen_messagepacket_without_seqnum(StreamName, NextSeq, Messages) ->
     Count = length(Messages),
     FlattenedMessages = list_to_binary(lists:flatten(Messages)),
     <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>.
@@ -79,6 +86,7 @@ gen_messagepacket_without_seqnum(StreamName,NextSeq,Messages) ->
 %% then adds the length header needed by MOLD64. It
 %% returns the binary encoded message.
 %% ------------------------------------------------
+-spec encode_message(list() | binary()) -> binary().
 encode_message(Message) when is_list(Message) ->
     encode_message(list_to_binary(Message));
 encode_message(Message) when is_binary(Message) ->
@@ -92,6 +100,7 @@ encode_message(Message) when is_binary(Message) ->
 %% message was to be appended to the parent message
 %% (according to Mold 64 protocol)
 %% ------------------------------------------------
+-spec message_length(non_neg_integer(), binary()) -> pos_integer().
 message_length(0,Message) ->
     % Header is 20 bytes
     % 2 bytes for length of message

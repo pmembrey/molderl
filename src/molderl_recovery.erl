@@ -84,9 +84,11 @@ terminate(normal, _State) ->
 %% with the right size to be at or under the specified packet
 %% size in Mold 64
 %% ------------------------------------------------------------
+-spec truncate_messages([binary()], non_neg_integer()) -> [binary()].
 truncate_messages(Messages, PacketSize) ->
     truncate_messages(Messages, PacketSize, 0, []).
 
+-spec truncate_messages([binary()], non_neg_integer(), non_neg_integer(), [binary()]) -> [binary()].
 truncate_messages([], _PacketSize, _Size, Acc) ->
     lists:reverse(Acc);
 truncate_messages([Message|Messages], PacketSize, Size, Acc) ->
