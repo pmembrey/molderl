@@ -67,7 +67,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                           },
             {ok, State};
         {error, Reason} ->
-            lager:error("Unable to open UDP socket on ~p because ~p. Aborting.~n",
+            lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
                       [IPAddressToSendFrom, inet:format_error(Reason)]),
             {stop, Reason}
     end.
@@ -115,7 +115,7 @@ handle_info(prod, State) -> % Timer triggered a send
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
             {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
         _ ->
-            lager:debug("MOLD stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
+            lager:debug("[molderl] stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
             {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
             molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
@@ -123,7 +123,7 @@ handle_info(prod, State) -> % Timer triggered a send
     end.
 
 handle_call(Msg, _From, State) ->
-    lager:warning("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
+    lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->

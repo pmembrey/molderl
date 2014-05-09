@@ -8,6 +8,8 @@
 
 -include("molderl.hrl").
 
+-compile([{parse_transform, lager_transform}]).
+
 -record(stream, {destination_addr :: {inet:ip4_address(), inet:port_number()},
                  recovery_port :: inet:port_number()}).
 
@@ -56,6 +58,7 @@ handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,I
                     {reply, {error, Error}, State}
             end;
         {error, Error} ->
+            lager:error("[molderl] Unable to create stream '~p' because '~p'", [StreamName, Error]),
             {reply, {error, Error},  State}
     end.
 
