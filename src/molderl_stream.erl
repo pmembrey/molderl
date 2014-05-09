@@ -64,7 +64,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            prod_interval = ProdInterval,
                            statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                            statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
+                           statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
                           },
             {ok, State};
         {error, Reason} ->
