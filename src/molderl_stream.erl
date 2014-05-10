@@ -13,30 +13,30 @@
 
 -define(STATE,State#state).
 
--record(state, { stream_name,            % Name of the stream encoded for MOLD64 (i.e. padded binary)
-                 destination,            % The IP address to send / broadcast / multicast to
-                 sequence_number = 1,    % Next sequence number
-                 socket,                 % The socket to send the data on
-                 destination_port,       % Destination port for the data
-                 messages = [],          % List of messages waiting to be encoded and sent
-                 message_length = 0,     % Current length of messages if they were to be encoded in a MOLD64 packet
-                 recovery_service,       % Pid of the recovery service message
-                 start_time,             % Start time of the earliest msg in a packet
-                 prod_interval,          % Maximum interval at which either partial packets or heartbeats should be sent
-                 timer_ref,              % reference to timer used for hearbeats and flush interval
-                 statsd_latency_key_in,  % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                 statsd_latency_key_out, % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                 statsd_count_key        % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+-record(state, {stream_name :: binary(),                 % Name of the stream encoded for MOLD64 (i.e. padded binary)
+                destination :: inet:ip4_address(),       % The IP address to send / broadcast / multicast to
+                sequence_number = 1 :: pos_integer(),    % Next sequence number
+                socket :: inet:socket(),                 % The socket to send the data on
+                destination_port :: inet:port_number(),  % Destination port for the data
+                messages = [] :: list(),                 % List of messages waiting to be encoded and sent
+                message_length = 0 :: non_neg_integer(), % Current length of messages if they were to be encoded in a MOLD64 packet
+                recovery_service :: pid() ,              % Pid of the recovery service message
+                start_time :: erlang:timestamp(),        % Start time of the earliest msg in a packet
+                prod_interval :: pos_integer(),          % Maximum interval at which either partial packets or heartbeats should be sent
+                timer_ref :: reference(),                % reference to timer used for hearbeats and flush interval
+                statsd_latency_key_in :: string(),       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                statsd_latency_key_out :: string(),      % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                statsd_count_key :: string()             % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
            RecoveryPort, IPAddressToSendFrom, Timer) ->
-    gen_server:start_link({local, StreamName},
-                          ?MODULE,
+    gen_server:start_link(?MODULE,
                           [SupervisorPid, StreamName, Destination, DestinationPort,
                            RecoveryPort, IPAddressToSendFrom, Timer],
                           []).
 
+-spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
 send(Pid, Message, StartTime) ->
     gen_server:cast(Pid, {send, Message, StartTime}).
 
@@ -64,11 +64,11 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                            prod_interval = ProdInterval,
                            statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                            statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
+                           statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
                           },
             {ok, State};
         {error, Reason} ->
-            lager:error("Unable to open UDP socket on ~p because ~p. Aborting.~n",
+            lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
                       [IPAddressToSendFrom, inet:format_error(Reason)]),
             {stop, Reason}
     end.
@@ -116,7 +116,7 @@ handle_info(prod, State) -> % Timer triggered a send
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
             {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
         _ ->
-            lager:debug("MOLD stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
+            lager:debug("[molderl] stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
             {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
             molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
@@ -124,7 +124,7 @@ handle_info(prod, State) -> % Timer triggered a send
     end.
 
 handle_call(Msg, _From, State) ->
-    lager:warning("Unexpected message in module ~p: ~p~n",[?MODULE, Msg]),
+    lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -133,6 +133,7 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(normal, _State) ->
     ok.
 
+-spec send_packet(#state{}) -> {pos_integer(), [{pos_integer(), binary()}]}.
 send_packet(State) ->
     MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
     {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
@@ -141,6 +142,7 @@ send_packet(State) ->
     statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
     {NextSequence, MessagesWithSequenceNumbers}.
 
+-spec send_heartbeat(#state{}) -> 'ok' | {'error', inet:posix() | 'not_owner'}.
 send_heartbeat(State) ->
     Heartbeat = molderl_utils:gen_heartbeat(?STATE.stream_name, ?STATE.sequence_number),
     gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Heartbeat).
