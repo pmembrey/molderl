@@ -7,7 +7,8 @@
 -export([gen_heartbeat/2, gen_endofsession/2,
          gen_streamname/1, gen_messagepacket/3,
          gen_messagepacket_without_seqnum/3]).
--export([message_length/2]).
+-export([message_length/2,
+        get_max_message_size/0]).
 -include("molderl.hrl").
 
 %% ------------------------------
@@ -110,6 +111,21 @@ message_length(Size,Message) ->
     % Need to add 2 bytes for the length
     % and X bytes for the message itself
     Size + 2 + byte_size(Message).
+
+
+%% ---------------------------------------------------
+%% Return the maximum payload size. Currently this
+%% is hard coded in a header, but ultimately this will
+%% be configurable in order to support jumbo frames or
+%% to allow packets that can fragment.
+%%
+%% As molderl will crash if an app tries to send a
+%% message that's larger than the maximum size, there
+%% needs to be a way to query for that size.
+%% ----------------------------------------------------
+-spec get_max_message_size() -> pos_integer().
+get_max_message_size() ->
+    ?PACKET_SIZE.
 
 -ifdef(TEST).
 
