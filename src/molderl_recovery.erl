@@ -32,7 +32,7 @@ store(Pid, Item) ->
 
 init([StreamName, RecoveryPort, PacketSize]) ->
 
-    {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,true}]),
+    {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}]),
 
     State = #state {
                     socket             = Socket,
@@ -65,6 +65,8 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
 
     statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
     statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
+
+    ok = inet:setopts(?STATE.socket, [{active, once}]),
 
     {noreply, State}.
 
