@@ -52,7 +52,7 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
     TS = os:timestamp(),
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
     lager:debug("[molderl] Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p",
-              [IP,SessionName,SequenceNumber,Count]),
+                [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
     % Get messages from recovery table
     % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
     Messages = ets:select(?STATE.table_id,
