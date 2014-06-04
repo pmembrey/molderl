@@ -18,7 +18,7 @@
                 sequence_number = 1 :: pos_integer(),    % Next sequence number
                 socket :: inet:socket(),                 % The socket to send the data on
                 destination_port :: inet:port_number(),  % Destination port for the data
-                messages = [] :: list(),                 % List of messages waiting to be encoded and sent
+                messages = [] :: [binary()],             % List of messages waiting to be encoded and sent
                 message_length = 0 :: non_neg_integer(), % Current length of messages if they were to be encoded in a MOLD64 packet
                 recovery_service :: pid() ,              % Pid of the recovery service message
                 start_time :: erlang:timestamp(),        % Start time of the earliest msg in a packet
@@ -92,12 +92,19 @@ handle_cast({send, Message, StartTime}, State) ->
     case MessageLength > ?PACKET_SIZE of
         true -> % Nope we can't, send what we have and requeue
             erlang:cancel_timer(?STATE.timer_ref),
+
+            EncodedMsgs = molderl_utils:encode_messages(?STATE.messages),
+            {Count, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(EncodedMsgs)),
+            ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload),
+            statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
+            statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
+
+            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs),
+
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
-            {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
-            molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
             {noreply, ?STATE{message_length=molderl_utils:message_length(0,Message),
                              messages=[Message],
-                             sequence_number=NextSequence,
+                             sequence_number=?STATE.sequence_number+Count,
                              timer_ref=TRef,
                              start_time=StartTime}};
         false -> % Yes we can - add it to the list of messages
@@ -112,15 +119,22 @@ handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, PacketSize}, S
 handle_info(prod, State) -> % Timer triggered a send
     case ?STATE.messages of
         [] ->
-            send_heartbeat(State),
+            ok = send_heartbeat(State),
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
             {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
         _ ->
             lager:debug("[molderl] stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
-            {NextSequence, MessagesWithSequenceNumbers} = send_packet(State),
-            molderl_recovery:store(?STATE.recovery_service, MessagesWithSequenceNumbers),
+
+            EncodedMsgs = molderl_utils:encode_messages(?STATE.messages),
+            {Count, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(EncodedMsgs)),
+            ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload),
+            statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
+            statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
+
+            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs),
+
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
-            {noreply, ?STATE{message_length=0, messages=[], sequence_number=NextSequence, timer_ref=TRef}}
+            {noreply, ?STATE{message_length=0, messages=[], sequence_number=?STATE.sequence_number+Count, timer_ref=TRef}}
     end.
 
 handle_call(Msg, _From, State) ->
@@ -132,15 +146,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(normal, _State) ->
     ok.
-
--spec send_packet(#state{}) -> {pos_integer(), [{pos_integer(), binary()}]}.
-send_packet(State) ->
-    MsgPkt = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(?STATE.messages)),
-    {NextSequence, EncodedMessage, MessagesWithSequenceNumbers} = MsgPkt,
-    ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EncodedMessage),
-    statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
-    statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
-    {NextSequence, MessagesWithSequenceNumbers}.
 
 -spec send_heartbeat(#state{}) -> 'ok' | {'error', inet:posix() | 'not_owner'}.
 send_heartbeat(State) ->
