@@ -66,7 +66,6 @@ gen_messagepacket(StreamName, NextSeq, EncodedMsgs) ->
     EncodedMsgsBinary = list_to_binary(EncodedMsgs),
     {Count, <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>}.
 
-
 -spec encode_messages([binary()]) -> [binary()].
 encode_messages(Msgs) ->
     lists:map(fun encode_message/1, Msgs).

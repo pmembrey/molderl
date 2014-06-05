@@ -75,13 +75,19 @@ instantiator(_) ->
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request2),
     [RecoveredMsg2] = receive_messages("foo", FooSocket),
 
+    % test recovery multiple msgs
+    Seq3 = Seq2+1,
+    Request3 = <<SessionName/binary, Seq3:64, 3:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request3),
+    RecoveredMsgs3 = receive_messages("foo", FooSocket),
+
     % using different ports for streaming and recovery
     QuxPort = 45678,
     {ok, QuxSocket} = gen_udp:open(QuxPort, [binary, {reuseaddr, true}]),
     gen_udp:send(QuxSocket, LocalHostIP, FooRecPort, Request1),
-    [RecoveredMsg3] = receive_messages("foo", QuxSocket),
-    gen_udp:send(QuxSocket, LocalHostIP, FooRecPort, Request2),
     [RecoveredMsg4] = receive_messages("foo", QuxSocket),
+    gen_udp:send(QuxSocket, LocalHostIP, FooRecPort, Request2),
+    [RecoveredMsg5] = receive_messages("foo", QuxSocket),
 
     [
         ?_assertEqual({error, destination_address_already_in_use}, ConflictAddr),
@@ -95,8 +101,9 @@ instantiator(_) ->
         ?_assertEqual(BigMsg, ExpectedBigMsg),
         ?_assertEqual({Seq1, Msg1}, RecoveredMsg1),
         ?_assertEqual({Seq2, Msg2}, RecoveredMsg2),
-        ?_assertEqual({Seq1, Msg1}, RecoveredMsg3),
-        ?_assertEqual({Seq2, Msg2}, RecoveredMsg4)
+        ?_assertEqual([{Seq3, <<"foo">>}, {Seq3+1, <<"bar">>}, {Seq3+2, <<"baz">>}], RecoveredMsgs3),
+        ?_assertEqual({Seq1, Msg1}, RecoveredMsg4),
+        ?_assertEqual({Seq2, Msg2}, RecoveredMsg5)
      ].
 
 molderl_test_() ->
@@ -108,6 +115,7 @@ molderl_test_() ->
 molderl_get_max_message_size_test() ->
     ?_assertEqual(?PACKET_SIZE,molderl_utils:get_max_message_size()).
 
+-spec receive_messages(binary(), port()) -> [{pos_integer(), binary()}].
 receive_messages(StreamName, Socket) ->
     ModName = molderl_utils:gen_streamname(StreamName),
     ModNameSize = byte_size(ModName),

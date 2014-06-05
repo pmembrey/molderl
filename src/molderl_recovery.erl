@@ -16,12 +16,13 @@
 -define(STATE,State#state).
 
 -record(state, {
-                socket :: port(),               % Socket to send data on
-                stream_name,                    % Stream name for encoding the response
-                packet_size :: integer(),       % maximum packet size of messages in bytes
-                cache = [] :: list(),           % list of MOLD messages to recover from
-                statsd_latency_key :: string(), % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
-                statsd_count_key :: string()    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
+                socket :: port(),                     % Socket to send data on
+                stream_name,                          % Stream name for encoding the response
+                packet_size :: integer(),             % maximum packet size of messages in bytes
+                cache = [] :: list(),                 % list of MOLD messages to recover from
+                cache_size = 0 :: non_neg_integer(),  % number of messages in the cache, faster than calling length(cache)
+                statsd_latency_key :: string(),       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
+                statsd_count_key :: string()          % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
                }).
 
 start_link(StreamName, RecoveryPort, PacketSize) ->
@@ -44,7 +45,7 @@ init([StreamName, RecoveryPort, PacketSize]) ->
     {ok, State}.
 
 handle_cast({store, Msgs}, State) ->
-    {noreply, ?STATE{cache=Msgs++?STATE.cache}}.
+    {noreply, ?STATE{cache=Msgs++?STATE.cache, cache_size=?STATE.cache_size+length(Msgs)}}.
 
 handle_info({udp, _Client, IP, Port, Message}, State) ->
     TS = os:timestamp(),
@@ -53,13 +54,12 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
                 [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
 
     % Get messages from recovery cache
-    Messages = lists:sublist(?STATE.cache, length(?STATE.cache)-SequenceNumber-Count+2, Count),
+    Messages = lists:reverse(lists:sublist(?STATE.cache, ?STATE.cache_size-SequenceNumber-Count+2, Count)),
 
-    % Remove messages if bigger than allowed packet size, take advantage of this to reverse list
+    % Remove messages if bigger than allowed packet size
     TruncatedMsgs = truncate_messages(Messages, ?STATE.packet_size),
 
     % Generate a MOLD packet
-
     {_, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, TruncatedMsgs),
     ok = gen_udp:send(?STATE.socket, IP, Port, Payload),
     statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
@@ -91,12 +91,12 @@ truncate_messages(Messages, PacketSize) ->
 
 -spec truncate_messages([binary()], non_neg_integer(), non_neg_integer(), [binary()]) -> [binary()].
 truncate_messages([], _PacketSize, _Size, Acc) ->
-    Acc;
+    lists:reverse(Acc);
 truncate_messages([Message|Messages], PacketSize, Size, Acc) ->
     MessageLen = molderl_utils:message_length(Size, Message),
     case MessageLen > PacketSize of
         true ->
-            Acc;
+            lists:reverse(Acc);
         false ->
             truncate_messages(Messages, PacketSize, MessageLen, [Message|Acc])
     end.
@@ -113,7 +113,7 @@ truncate_messages_test() ->
         <<"f","o","o","b","a","r","b","a","z">>
     ],
     Packet = truncate_messages(Messages, 40),
-    Expected = [<<"1","2","3">>,<<"a","b","c","d","e">>,<<"x">>,<<>>],
+    Expected = [<<>>,<<"x">>,<<"a","b","c","d","e">>,<<"1","2","3">>],
     ?assertEqual(Packet, Expected).
 
 -endif.
