@@ -119,7 +119,9 @@ handle_call(Msg, _From, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(normal, _State) ->
+terminate(Reason, State) ->
+    Fmt = "[molderl] molderl_stream process for stream ~p is exiting because of reason ~p.",
+    lager:error(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
     ok.
 
 -spec flush(#state{}) -> #state{}.
