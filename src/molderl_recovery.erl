@@ -16,19 +16,20 @@
 -define(STATE,State#state).
 
 -record(state, {
-                socket,             % Socket to send data on
-                stream_name,        % Stream name for encoding the response
-                table_id,           % ETS table with the replay data in it
-                packet_size,        % maximum packet size of messages in bytes
-                statsd_latency_key, % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                statsd_count_key    % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                socket :: port(),                     % Socket to send data on
+                stream_name,                          % Stream name for encoding the response
+                packet_size :: integer(),             % maximum packet size of messages in bytes
+                cache = [] :: list(),                 % list of MOLD messages to recover from
+                cache_size = 0 :: non_neg_integer(),  % number of messages in the cache, faster than calling length(cache)
+                statsd_latency_key :: string(),       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
+                statsd_count_key :: string()          % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
                }).
 
 start_link(StreamName, RecoveryPort, PacketSize) ->
     gen_server:start_link(?MODULE, [StreamName, RecoveryPort, PacketSize], []).
 
-store(Pid, Item) ->
-    gen_server:cast(Pid, {store, Item}).
+store(Pid, Msgs) ->
+    gen_server:cast(Pid, {store, Msgs}).
 
 init([StreamName, RecoveryPort, PacketSize]) ->
 
@@ -37,32 +38,30 @@ init([StreamName, RecoveryPort, PacketSize]) ->
     State = #state {
                     socket             = Socket,
                     stream_name        = molderl_utils:gen_streamname(StreamName),
-                    table_id           = ets:new(recovery_table, [ordered_set]),
                     packet_size        = PacketSize,
                     statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
                     statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"
                    },
     {ok, State}.
 
-handle_cast({store, Item}, State) ->
-    ets:insert(?STATE.table_id, Item),
-    {noreply, State}.
+handle_cast({store, Msgs}, State) ->
+    {noreply, ?STATE{cache=Msgs++?STATE.cache, cache_size=?STATE.cache_size+length(Msgs)}}.
 
 handle_info({udp, _Client, IP, Port, Message}, State) ->
     TS = os:timestamp(),
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
     lager:debug("[molderl] Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p",
                 [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
-    % Get messages from recovery table
-    % Generated with ets:fun2ms(fun({X,Y}) when X < Min + Count ,X > 2 -> Y end).
-    Messages = ets:select(?STATE.table_id,
-                          [{{'$1','$2'},[{'=<','$1',SequenceNumber + Count -1},{'>=','$1',SequenceNumber}],['$2']}]),
-    % Remove messages if bigger than allowed packet size
-    TruncatedMessages = truncate_messages(Messages, ?STATE.packet_size),
-    % Generate a MOLD packet
-    EncodedMessage = molderl_utils:gen_messagepacket_without_seqnum(?STATE.stream_name,SequenceNumber,TruncatedMessages),
-    gen_udp:send(?STATE.socket,IP,Port,EncodedMessage),
 
+    % Get messages from recovery cache
+    Messages = lists:reverse(lists:sublist(?STATE.cache, ?STATE.cache_size-SequenceNumber-Count+2, Count)),
+
+    % Remove messages if bigger than allowed packet size
+    TruncatedMsgs = truncate_messages(Messages, ?STATE.packet_size),
+
+    % Generate a MOLD packet
+    {_, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, TruncatedMsgs),
+    ok = gen_udp:send(?STATE.socket, IP, Port, Payload),
     statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
     statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
 
@@ -77,8 +76,10 @@ handle_call(Msg, _From, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(normal, _State) ->
-    ok.
+terminate(Reason, State) ->
+    Fmt = "[molderl] recovery process for stream ~p is exiting because of reason ~p.",
+    lager:error(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
+    ok = gen_udp:close(State#state.socket).
 
 %% ------------------------------------------------------------
 %% Takes a list of bitstrings, and returns a truncation of

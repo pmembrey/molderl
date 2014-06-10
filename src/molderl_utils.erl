@@ -4,11 +4,15 @@
 -endif.
 
 -module(molderl_utils).
--export([gen_heartbeat/2, gen_endofsession/2,
-         gen_streamname/1, gen_messagepacket/3,
-         gen_messagepacket_without_seqnum/3]).
+-export([gen_heartbeat/2,
+         gen_endofsession/2,
+         gen_streamname/1,
+         encode_messages/1,
+         gen_messagepacket/3]).
+
 -export([message_length/2,
-        get_max_message_size/0]).
+         get_max_message_size/0]).
+
 -include("molderl.hrl").
 
 %% ------------------------------
@@ -56,40 +60,22 @@ binary_padder(BinaryToPad) when byte_size(BinaryToPad) < 10 ->
 binary_padder(BinaryToPad) ->
     BinaryToPad.
 
-%% -------------------------------------------------
-%% Generates a message packet. This takes the stream
-%% name, the next sequence number and a message (or
-%% list of messages). It returns a completed MOLD64
-%% packet as well as the next sequence number. This
-%% is needed for generating the next message in the
-%% stream.
-%% -------------------------------------------------
--spec gen_messagepacket(binary(), pos_integer(), binary() | [binary()])
-    -> {pos_integer(), binary(), [{pos_integer(), binary()}]}.
-gen_messagepacket(StreamName, NextSeq, Message) when not is_list(Message) ->
-    gen_messagepacket(StreamName, NextSeq, [Message]);
-gen_messagepacket(StreamName, NextSeq, Messages) ->
-    Lambda = fun(Msg, I) -> {encode_message(Msg), I+1} end,
-    {EncodedMsgs, Count} = lists:mapfoldl(Lambda, 0, Messages),
+-spec gen_messagepacket(binary(), pos_integer(), [binary()]) -> {non_neg_integer(), binary()}.
+gen_messagepacket(StreamName, NextSeq, EncodedMsgs) ->
+    Count = length(EncodedMsgs),
     EncodedMsgsBinary = list_to_binary(EncodedMsgs),
-    Payload = <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>,
-    EncodedMsgsWithSeqNum = lists:zip(lists:seq(NextSeq, NextSeq+Count-1), EncodedMsgs),
-    {NextSeq+Count, Payload, EncodedMsgsWithSeqNum}.
+    {Count, <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>}.
 
--spec gen_messagepacket_without_seqnum(binary(), pos_integer(), list()) -> binary().
-gen_messagepacket_without_seqnum(StreamName, NextSeq, Messages) ->
-    Count = length(Messages),
-    FlattenedMessages = list_to_binary(lists:flatten(Messages)),
-    <<StreamName/binary,NextSeq:64/big-integer,Count:16/big-integer,FlattenedMessages/binary>>.
+-spec encode_messages([binary()]) -> [binary()].
+encode_messages(Msgs) ->
+    lists:map(fun encode_message/1, Msgs).
 
 %% ------------------------------------------------
-%% Takes a message as either a list of a binary and
+%% Takes a binary message and
 %% then adds the length header needed by MOLD64. It
 %% returns the binary encoded message.
 %% ------------------------------------------------
--spec encode_message(list() | binary()) -> binary().
-encode_message(Message) when is_list(Message) ->
-    encode_message(list_to_binary(Message));
+-spec encode_message(binary()) -> binary().
 encode_message(Message) when is_binary(Message) ->
     Length = byte_size(Message),
     <<Length:16/big-integer,Message/binary>>.
@@ -179,26 +165,30 @@ message_length_test() ->
 %% -----------------------------------
 %% Tests for encoding messages
 %% -----------------------------------
-encode_message_test() ->
-    ?assertEqual(encode_message(<<"foo">>), <<3:16/big-integer, <<"foo">>/binary>>),
-    ?assertEqual(encode_message("foo"), <<3:16/big-integer, <<"foo">>/binary>>).
+encode_messages_test() ->
+    ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
+                 [<<3:16/big-integer, <<"foo">>/binary>>,
+                  <<3:16/big-integer, <<"bar">>/binary>>,
+                  <<4:16/big-integer, <<"quux">>/binary>>]).
 
 %% -----------------------------------
-%% Tests for generating message packet
+%% Tests for encoding message
 %% -----------------------------------
+encode_message_test() ->
+    ?assertEqual(encode_message(<<"foo">>), <<3:16/big-integer, <<"foo">>/binary>>).
+
+encode_message_empty_test() ->
+    ?assertEqual(encode_message(<<"">>), <<0:16/big-integer>>).
+
+%%% -----------------------------------
+%%% Tests for generating message packet
+%%% -----------------------------------
+
 gen_messagepacket_test() ->
-    Msgs = ["foo", "bar", "baz", "qux"],
-    Result = gen_messagepacket(<<"foo">>, 23, Msgs),
-    {NextSeq, PacketPayload, EncodedMessagesWithSequenceNumbers} = Result,
-    ?assertEqual(27, NextSeq),
-    EncodedMsgs = [<<3:16/integer, <<"foo">>/binary>>, <<3:16/integer, <<"bar">>/binary>>,
-                   <<3:16/integer, <<"baz">>/binary>>, <<3:16/integer, <<"qux">>/binary>>],
-    FlattenedMsgs = list_to_binary(lists:flatten(EncodedMsgs)),
-    ExpectedPayload = <<<<"foo">>/binary, 23:64/big-integer, 4:16/big-integer, FlattenedMsgs/binary>>,
-    ?assertEqual(ExpectedPayload, PacketPayload),
-    EncodedMsgsSeqs = [{23, <<3:16/integer, <<"foo">>/binary>>}, {24, <<3:16/integer, <<"bar">>/binary>>},
-                       {25, <<3:16/integer, <<"baz">>/binary>>}, {26, <<3:16/integer, <<"qux">>/binary>>}],
-    ?assertEqual(EncodedMsgsSeqs, EncodedMessagesWithSequenceNumbers).
+    Msgs = [<<"foo">>, <<"bar">>, <<"quux">>],
+    Observed = gen_messagepacket(<<"foo">>, 23, Msgs),
+    Expected = {3, <<<<"foo">>/binary, 23:64, 3:16, <<"foobarquux">>/binary>>},
+    ?assertEqual(Expected, Observed).
 
 -endif.
 
