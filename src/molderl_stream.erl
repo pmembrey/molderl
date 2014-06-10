@@ -79,7 +79,7 @@ handle_cast({send, Message, StartTime}, State=#state{messages=[]}) -> % first ms
     % first, check if single message is bigger than packet size
     case MessageLength > ?PACKET_SIZE of
         true -> % log error, ignore message, but continue
-            lager:error("Molderl received a single message of length ~p"
+            lager:error("[molderl] Received a single message of length ~p"
                         ++ " which is bigger than the maximum packet size ~p",
                         [MessageLength, ?PACKET_SIZE]),
             {noreply, State};
