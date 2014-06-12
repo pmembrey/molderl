@@ -93,8 +93,7 @@ handle_cast({send, Message, StartTime}, State) ->
         true -> % Nope we can't, send what we have and requeue
             erlang:cancel_timer(?STATE.timer_ref),
             NewState = flush(State),
-            molderl_stream:send(self(), Message, StartTime), % requeue latest msg since it didn't fit
-            {noreply, NewState};
+            handle_cast({send, Message, StartTime}, NewState); % reprocess msg now that we have clean buffer
         false -> % Yes we can - add it to the list of messages
             {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end.
