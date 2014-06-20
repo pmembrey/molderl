@@ -50,18 +50,28 @@ handle_cast({store, Msgs}, State) ->
 handle_info({udp, _Client, IP, Port, Message}, State) ->
     TS = os:timestamp(),
     <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
-    lager:debug("[molderl] Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p",
-                [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
+    Fmt = "[molderl] Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p",
+    lager:debug(Fmt, [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
 
-    % Get messages from recovery cache
-    Messages = lists:reverse(lists:sublist(?STATE.cache, ?STATE.cache_size-SequenceNumber-Count+2, Count)),
+    % First sanitize input
+    case SequenceNumber > ?STATE.cache_size of
+        true -> % can't request for sequence number bigger than cache size...
+            Fmt2 = "[molderl] received incorrect recovery request - sequence number: ~p, cache size: ~p",
+            lager:warning(Fmt2, [SequenceNumber, ?STATE.cache_size]);
+        false -> % recover msgs from cache and send
 
-    % Remove messages if bigger than allowed packet size
-    TruncatedMsgs = truncate_messages(Messages, ?STATE.packet_size),
+            % The math to infer indices is a bit tricky because the cache is in reverse order
+            Start = max(?STATE.cache_size-SequenceNumber-Count+2, 1),
+            Len = min(?STATE.cache_size-SequenceNumber+1, Count),
+            Messages = lists:reverse(lists:sublist(?STATE.cache, Start, Len)),
 
-    % Generate a MOLD packet
-    {_, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, TruncatedMsgs),
-    ok = gen_udp:send(?STATE.socket, IP, Port, Payload),
+            % Remove messages if bigger than allowed packet size
+            TruncatedMsgs = truncate_messages(Messages, ?STATE.packet_size),
+
+            {_, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, TruncatedMsgs),
+            ok = gen_udp:send(?STATE.socket, IP, Port, Payload)
+    end,
+
     statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
     statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
 
@@ -117,6 +127,10 @@ truncate_messages_test() ->
     Packet = truncate_messages(Messages, 40),
     Expected = [<<>>,<<"x">>,<<"a","b","c","d","e">>,<<"1","2","3">>],
     ?assertEqual(Packet, Expected).
+
+truncate_messages_empty_test() ->
+    Packet = truncate_messages([], 40),
+    ?assertEqual(Packet, []).
 
 -endif.
 

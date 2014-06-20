@@ -107,7 +107,6 @@ handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but ms
     TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
     {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
 handle_info(prod, State) -> % Timer triggered a send
-    lager:debug("[molderl] stream ~p: forced partial packet send due to timeout", [?STATE.stream_name]),
     NewState = flush(State),
     {noreply, NewState}.
 
