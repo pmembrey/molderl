@@ -190,5 +190,11 @@ gen_messagepacket_test() ->
     Expected = {3, <<<<"foo">>/binary, 23:64, 3:16, <<"foobarquux">>/binary>>},
     ?assertEqual(Expected, Observed).
 
+gen_messagepacket_empty_test() ->
+    Msgs = [],
+    Observed = gen_messagepacket(<<"foo">>, 23, Msgs),
+    Expected = {0, <<<<"foo">>/binary, 23:64, 0:16>>},
+    ?assertEqual(Expected, Observed).
+
 -endif.
 
