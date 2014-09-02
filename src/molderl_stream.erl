@@ -43,6 +43,8 @@ send(Pid, Message, StartTime) ->
 init([SupervisorPID, StreamName, Destination, DestinationPort,
       RecoveryPort, IPAddressToSendFrom, ProdInterval]) ->
 
+    process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
+
     MoldStreamName = molderl_utils:gen_streamname(StreamName),
 
     % send yourself a reminder to start recovery process
@@ -118,6 +120,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(Reason, State) ->
+    ok = gen_udp:close(State#state.socket),
     Fmt = "[molderl] molderl_stream process for stream ~p is exiting because of reason ~p.",
     lager:error(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
     ok.

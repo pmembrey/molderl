@@ -33,6 +33,8 @@ store(Pid, Msgs) ->
 
 init([StreamName, RecoveryPort, PacketSize]) ->
 
+    process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
+
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}]),
 
     State = #state {
