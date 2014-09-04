@@ -94,8 +94,12 @@ handle_cast({send, Message, StartTime}, State) ->
     case MessageLength > ?PACKET_SIZE of
         true -> % Nope we can't, send what we have and requeue
             erlang:cancel_timer(?STATE.timer_ref),
-            NewState = flush(State),
-            handle_cast({send, Message, StartTime}, NewState); % reprocess msg now that we have clean buffer
+            case flush(State) of
+                {ok, NewState} ->
+                    handle_cast({send, Message, StartTime}, NewState); % reprocess msg now that we have clean buffer
+                {error, Reason} ->
+                    {stop, Reason, State}
+            end;
         false -> % Yes we can - add it to the list of messages
             {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end.
@@ -109,8 +113,12 @@ handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but ms
     TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
     {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
 handle_info(prod, State) -> % Timer triggered a send
-    NewState = flush(State),
-    {noreply, NewState}.
+    case flush(State) of
+        {ok, NewState} ->
+            {noreply, NewState};
+        {error, Reason} ->
+            {stop, Reason, State}
+    end.
 
 handle_call(Msg, _From, State) ->
     lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
@@ -125,18 +133,25 @@ terminate(Reason, State) ->
     lager:error(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
     ok.
 
--spec flush(#state{}) -> #state{}.
+-spec flush(#state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
 flush(State) -> % send out the messages in the current buffer queue
     EncodedMsgs = molderl_utils:encode_messages(?STATE.messages),
     {Count, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(EncodedMsgs)),
-    ok = gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload),
-    statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
-    statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
-
-    molderl_recovery:store(?STATE.recovery_service, EncodedMsgs),
-
-    TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
-    ?STATE{message_length=0, messages=[], sequence_number=?STATE.sequence_number+Count, timer_ref=TRef}.
+    case gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload) of
+        ok ->
+            statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
+            statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
+            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs),
+            TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
+            {ok, ?STATE{message_length=0, messages=[], sequence_number=?STATE.sequence_number+Count, timer_ref=TRef}};
+        {error, eagain} ->
+            TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
+            {ok, ?STATE{timer_ref=TRef}}; % retry next cycle
+        {error, Reason} ->
+            lager:error("[molderl] Experienced issue ~p (~p) writing to UDP socket. Resetting.",
+                        [Reason, inet:format_error(Reason)]),
+            {error, Reason}
+    end.
 
 -spec send_heartbeat(#state{}) -> 'ok' | {'error', inet:posix() | 'not_owner'}.
 send_heartbeat(State) ->
