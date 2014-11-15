@@ -69,8 +69,12 @@ instantiator(_) ->
 
     % Recovery tests
 
-    % using same port for streaming and recovery
+    % first send a broken recovery request, see if it breaks
     SessionName = molderl_utils:gen_streamname("foo"),
+    BrokenRequest = <<SessionName/binary>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, BrokenRequest),
+
+    % using same port for streaming and recovery
     Request1 = <<SessionName/binary, Seq1:64, 1:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request1),
     [RecoveredMsg1] = receive_messages("foo", FooSocket, 500),
