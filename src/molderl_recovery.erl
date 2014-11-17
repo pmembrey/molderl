@@ -49,9 +49,8 @@ init([StreamName, RecoveryPort, PacketSize]) ->
 handle_cast({store, Msgs}, State) ->
     {noreply, ?STATE{cache=Msgs++?STATE.cache, cache_size=?STATE.cache_size+length(Msgs)}}.
 
-handle_info({udp, _Client, IP, Port, Message}, State) ->
+handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>>}, State) ->
     TS = os:timestamp(),
-    <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>> = Message,
     Fmt = "[molderl] Received recovery request from ~p: [session name] ~p [sequence number] ~p [count] ~p",
     lager:debug(Fmt, [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
 
@@ -79,6 +78,11 @@ handle_info({udp, _Client, IP, Port, Message}, State) ->
 
     ok = inet:setopts(?STATE.socket, [{active, once}]),
 
+    {noreply, State};
+handle_info({udp, _Client, IP, Port, IllFormedRequest}, State) ->
+    Fmt = "[molderl] Received ill-formed recovery request from ~p:~p -> \"~p\".",
+    lager:error(Fmt, [IP, Port, IllFormedRequest]),
+    ok = inet:setopts(?STATE.socket, [{active, once}]),
     {noreply, State}.
 
 handle_call(Msg, _From, State) ->
