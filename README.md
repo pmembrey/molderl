@@ -50,7 +50,8 @@ will populate the following metrics:
 | Type | Name |
 | ---- | ---- |
 | counter | molderl.\<stream_name>.packet.sent |
-| timer | molderl.\<stream name>.packet.latency* |
+| timer | molderl.\<stream name>.packet.time_in* |
+| timer | molderl.\<stream name>.packet.time_out* |
 | counter | molderl.\<stream_name>.recovery_request.received |
 | timer | molderl.\<stream_name>.recovery_request.latency |
 
