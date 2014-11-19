@@ -66,19 +66,23 @@ gen_messagepacket(StreamName, NextSeq, EncodedMsgs) ->
     EncodedMsgsBinary = list_to_binary(EncodedMsgs),
     {Count, <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>}.
 
--spec encode_messages([binary()]) -> [binary()].
+-spec encode_messages([binary()]) -> {[binary()], integer(), integer()}.
 encode_messages(Msgs) ->
-    lists:map(fun encode_message/1, Msgs).
+    encode_messages(Msgs, [], 0, 0).
 
 %% ------------------------------------------------
-%% Takes a binary message and
-%% then adds the length header needed by MOLD64. It
-%% returns the binary encoded message.
+%% Takes a list of binary messages, prepend the
+%% length header needed by MOLD64 to each or them
+%% and returns the resulting list of encoded msgs,
+%% with number of msgs and total byte size.
 %% ------------------------------------------------
--spec encode_message(binary()) -> binary().
-encode_message(Message) when is_binary(Message) ->
-    Length = byte_size(Message),
-    <<Length:16/big-integer,Message/binary>>.
+-spec encode_messages([binary()], [binary()], integer(), integer()) -> {[binary()], integer(), integer()}.
+encode_messages([], EncodedMsgs, NumMsgs, NumBytes) ->
+    {lists:reverse(EncodedMsgs), NumMsgs, NumBytes};
+encode_messages([Msg|Msgs], EncodedMsgs, NumMsgs, NumBytes) ->
+    Length = byte_size(Msg),
+    EncodedMsg = <<Length:16/big-integer, Msg/binary>>,
+    encode_messages(Msgs, [EncodedMsg|EncodedMsgs], NumMsgs+1, NumBytes+Length).
 
 %% ------------------------------------------------
 %% Given a parent message's length and a child
@@ -97,7 +101,6 @@ message_length(Size,Message) ->
     % Need to add 2 bytes for the length
     % and X bytes for the message itself
     Size + 2 + byte_size(Message).
-
 
 %% ---------------------------------------------------
 %% Return the maximum payload size. Currently this
@@ -167,18 +170,9 @@ message_length_test() ->
 %% -----------------------------------
 encode_messages_test() ->
     ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
-                 [<<3:16/big-integer, <<"foo">>/binary>>,
-                  <<3:16/big-integer, <<"bar">>/binary>>,
-                  <<4:16/big-integer, <<"quux">>/binary>>]).
-
-%% -----------------------------------
-%% Tests for encoding message
-%% -----------------------------------
-encode_message_test() ->
-    ?assertEqual(encode_message(<<"foo">>), <<3:16/big-integer, <<"foo">>/binary>>).
-
-encode_message_empty_test() ->
-    ?assertEqual(encode_message(<<"">>), <<0:16/big-integer>>).
+                 {[<<3:16/big-integer, <<"foo">>/binary>>,
+                   <<3:16/big-integer, <<"bar">>/binary>>,
+                   <<4:16/big-integer, <<"quux">>/binary>>], 3, 10}).
 
 %%% -----------------------------------
 %%% Tests for generating message packet

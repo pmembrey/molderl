@@ -7,7 +7,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/3, store/2]).
+-export([start_link/3, store/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -16,20 +16,26 @@
 -define(STATE,State#state).
 
 -record(state, {
-                socket :: port(),                     % Socket to send data on
-                stream_name,                          % Stream name for encoding the response
-                packet_size :: integer(),             % maximum packet size of messages in bytes
-                cache = [] :: list(),                 % list of MOLD messages to recover from
-                cache_size = 0 :: non_neg_integer(),  % number of messages in the cache, faster than calling length(cache)
-                statsd_latency_key :: string(),       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
-                statsd_count_key :: string()          % cache the StatsD key to prevent binary_to_list/1 calls and concatenation
+                socket :: port(),          % Socket to send data on
+                stream_name,               % Stream name for encoding the response
+                packet_size :: integer(),  % maximum packet size of messages in bytes
+                cache = [] :: list(),      % list of MOLD messages to recover from
+                % cache number of messages in and size of the cache,
+                % faster than calling length(cache) and byte_size(cache) everytime
+                cache_size_msgs = 0 :: non_neg_integer(),
+                cache_size_bytes = 0 :: non_neg_integer(),
+                % cache the StatsD keys to prevent repeated atom_to_list/1 calls and concatenation
+                statsd_latency_key :: string(),
+                statsd_count_key :: string(),
+                statsd_memory_key :: string(),
+                statsd_msgs_key :: string()
                }).
 
 start_link(StreamName, RecoveryPort, PacketSize) ->
     gen_server:start_link(?MODULE, [StreamName, RecoveryPort, PacketSize], []).
 
-store(Pid, Msgs) ->
-    gen_server:cast(Pid, {store, Msgs}).
+store(Pid, Msgs, NumMsgs, NumBytes) ->
+    gen_server:cast(Pid, {store, Msgs, NumMsgs, NumBytes}).
 
 init([StreamName, RecoveryPort, PacketSize]) ->
 
@@ -42,12 +48,18 @@ init([StreamName, RecoveryPort, PacketSize]) ->
                     stream_name        = molderl_utils:gen_streamname(StreamName),
                     packet_size        = PacketSize,
                     statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
-                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"
+                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received",
+                    statsd_memory_key  = "molderl." ++ atom_to_list(StreamName) ++ ".bytes.cached",
+                    statsd_msgs_key  = "molderl." ++ atom_to_list(StreamName) ++ ".messages.cached"
                    },
     {ok, State}.
 
-handle_cast({store, Msgs}, State) ->
-    {noreply, ?STATE{cache=Msgs++?STATE.cache, cache_size=?STATE.cache_size+length(Msgs)}}.
+handle_cast({store, Msgs, NumMsgs, NumBytes}, State) ->
+    statsderl:gauge(?STATE.statsd_msgs_key, ?STATE.cache_size_msgs, 0.01),
+    statsderl:gauge(?STATE.statsd_memory_key, ?STATE.cache_size_bytes, 0.01),
+    {noreply, ?STATE{cache=Msgs++?STATE.cache,
+                     cache_size_msgs=?STATE.cache_size_msgs+NumMsgs,
+                     cache_size_bytes=?STATE.cache_size_bytes+NumBytes}}.
 
 handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>>}, State) ->
     TS = os:timestamp(),
@@ -55,15 +67,15 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
     lager:debug(Fmt, [IP,string:strip(binary_to_list(SessionName), right),SequenceNumber,Count]),
 
     % First sanitize input
-    case SequenceNumber > ?STATE.cache_size of
+    case SequenceNumber > ?STATE.cache_size_msgs of
         true -> % can't request for sequence number bigger than cache size...
             Fmt2 = "[molderl] received incorrect recovery request - sequence number: ~p, cache size: ~p",
-            lager:warning(Fmt2, [SequenceNumber, ?STATE.cache_size]);
+            lager:warning(Fmt2, [SequenceNumber, ?STATE.cache_size_msgs]);
         false -> % recover msgs from cache and send
 
             % The math to infer indices is a bit tricky because the cache is in reverse order
-            Start = max(?STATE.cache_size-SequenceNumber-Count+2, 1),
-            Len = min(?STATE.cache_size-SequenceNumber+1, Count),
+            Start = max(?STATE.cache_size_msgs-SequenceNumber-Count+2, 1),
+            Len = min(?STATE.cache_size_msgs-SequenceNumber+1, Count),
             Messages = lists:reverse(lists:sublist(?STATE.cache, Start, Len)),
 
             % Remove messages if bigger than allowed packet size
