@@ -135,13 +135,13 @@ terminate(Reason, State) ->
 
 -spec flush(#state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
 flush(State) -> % send out the messages in the current buffer queue
-    EncodedMsgs = molderl_utils:encode_messages(?STATE.messages),
+    {EncodedMsgs, NumMsgs, NumBytes} = molderl_utils:encode_messages(?STATE.messages),
     {Count, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, lists:reverse(EncodedMsgs)),
     case gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload) of
         ok ->
             statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
             statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
-            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs),
+            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs, NumMsgs, NumBytes),
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
             {ok, ?STATE{message_length=0, messages=[], sequence_number=?STATE.sequence_number+Count, timer_ref=TRef}};
         {error, eagain} ->
