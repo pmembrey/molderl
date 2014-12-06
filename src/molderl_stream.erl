@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/7, send/3]).
+-export([start_link/8, send/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -15,7 +15,7 @@
 
 -record(state, {stream_name :: binary(),                 % Name of the stream encoded for MOLD64 (i.e. padded binary)
                 destination :: inet:ip4_address(),       % The IP address to send / broadcast / multicast to
-                sequence_number = 1 :: pos_integer(),    % Next sequence number
+                sequence_number :: pos_integer(),        % Next sequence number
                 socket :: inet:socket(),                 % The socket to send the data on
                 destination_port :: inet:port_number(),  % Destination port for the data
                 messages = [] :: [binary()],             % List of messages waiting to be encoded and sent
@@ -24,16 +24,17 @@
                 start_time :: erlang:timestamp(),        % Start time of the earliest msg in a packet
                 prod_interval :: pos_integer(),          % Maximum interval at which either partial packets or heartbeats should be sent
                 timer_ref :: reference(),                % reference to timer used for hearbeats and flush interval
-                statsd_latency_key_in :: string(),       % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                statsd_latency_key_out :: string(),      % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
-                statsd_count_key :: string()             % cache the StatsD key to prevent binary_to_list/1 calls and concatenation all the time
+                statsd_latency_key_in :: string(),       %
+                statsd_latency_key_out :: string(),      % cache the StatsD keys to prevent binary_to_list/1 calls 
+                statsd_count_key :: string(),            % and concatenation all the time
+                statsd_memory_key :: string()            %
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
-           RecoveryPort, IPAddressToSendFrom, Timer) ->
+           RecoveryPort, IPAddressToSendFrom, FileName, Timer) ->
     gen_server:start_link(?MODULE,
                           [SupervisorPid, StreamName, Destination, DestinationPort,
-                           RecoveryPort, IPAddressToSendFrom, Timer],
+                           RecoveryPort, IPAddressToSendFrom, FileName, Timer],
                           []).
 
 -spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
@@ -41,37 +42,42 @@ send(Pid, Message, StartTime) ->
     gen_server:cast(Pid, {send, Message, StartTime}).
 
 init([SupervisorPID, StreamName, Destination, DestinationPort,
-      RecoveryPort, IPAddressToSendFrom, ProdInterval]) ->
+      RecoveryPort, IPAddressToSendFrom, FileName, ProdInterval]) ->
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
-    MoldStreamName = molderl_utils:gen_streamname(StreamName),
+    case load_store(FileName) of
+        {ok, FileSize, Index} ->
 
-    % send yourself a reminder to start recovery process
-    self() ! {initialize, SupervisorPID, StreamName, RecoveryPort, ?PACKET_SIZE},
+            % send yourself a reminder to start recovery process
+            self() ! {initialize, SupervisorPID, StreamName, RecoveryPort, FileName, FileSize, Index, ?PACKET_SIZE},
 
-    Connection = gen_udp:open(0, [binary,
-                                    {broadcast, true},
-                                    {ip, IPAddressToSendFrom},
-                                    {add_membership, {Destination, IPAddressToSendFrom}},
-                                    {multicast_if, IPAddressToSendFrom}]),
+            Connection = gen_udp:open(0, [binary,
+                                          {broadcast, true},
+                                          {ip, IPAddressToSendFrom},
+                                          {add_membership, {Destination, IPAddressToSendFrom}},
+                                          {multicast_if, IPAddressToSendFrom}]),
 
-    case Connection of
-        {ok, Socket} ->
-            State = #state{stream_name = MoldStreamName,
-                           destination = Destination,
-                           socket = Socket,
-                           destination_port = DestinationPort,
-                           timer_ref = erlang:send_after(ProdInterval, self(), prod),
-                           prod_interval = ProdInterval,
-                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
-                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                           statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".sent"
-                          },
-            {ok, State};
+            case Connection of
+                {ok, Socket} ->
+                    State = #state{stream_name = molderl_utils:gen_streamname(StreamName),
+                                   destination = Destination,
+                                   sequence_number = length(Index),
+                                   socket = Socket,
+                                   destination_port = DestinationPort,
+                                   timer_ref = erlang:send_after(ProdInterval, self(), prod),
+                                   prod_interval = ProdInterval,
+                                   statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
+                                   statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
+                                   statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
+                                   statsd_memory_key = "molderl." ++ atom_to_list(StreamName) ++ ".bytes_sent"},
+                    {ok, State};
+                {error, Reason} ->
+                    lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
+                              [IPAddressToSendFrom, inet:format_error(Reason)]),
+                    {stop, Reason}
+            end;
         {error, Reason} ->
-            lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
-                      [IPAddressToSendFrom, inet:format_error(Reason)]),
             {stop, Reason}
     end.
 
@@ -104,8 +110,9 @@ handle_cast({send, Message, StartTime}, State) ->
             {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end.
 
-handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, PacketSize}, State) ->
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [StreamName, RecoveryPort, PacketSize], transient, worker),
+handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize}, State) ->
+    ArgsList = [StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize],
+    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, ArgsList, transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}};
 handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but msg queue empty
@@ -135,13 +142,14 @@ terminate(Reason, State) ->
 
 -spec flush(#state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
 flush(State) -> % send out the messages in the current buffer queue
-    {EncodedMsgs, NumMsgs, NumBytes} = molderl_utils:encode_messages(?STATE.messages),
+    {EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes} = molderl_utils:encode_messages(?STATE.messages),
     Payload = molderl_utils:gen_messagepacket(?STATE.stream_name, ?STATE.sequence_number, NumMsgs, EncodedMsgs),
     case gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, Payload) of
         ok ->
+            molderl_recovery:store(?STATE.recovery_service, EncodedMsgs, EncodedMsgsSize, NumMsgs),
             statsderl:timing_now(?STATE.statsd_latency_key_out, ?STATE.start_time, 0.1),
             statsderl:increment(?STATE.statsd_count_key, 1, 0.1),
-            molderl_recovery:store(?STATE.recovery_service, NumMsgs, NumBytes, ?STATE.messages),
+            statsderl:increment(?STATE.statsd_memory_key, NumBytes, 0.1),
             TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
             {ok, ?STATE{message_length=0, messages=[], sequence_number=?STATE.sequence_number+NumMsgs, timer_ref=TRef}};
         {error, eagain} ->
@@ -161,4 +169,49 @@ send_heartbeat(State) ->
 %send_endofsession(State) ->
 %    EndOfSession = molderl_utils:gen_endofsession(?STATE.stream_name, ?STATE.sequence_number),
 %    gen_udp:send(?STATE.socket, ?STATE.destination, ?STATE.destination_port, EndOfSession).
+
+% try to load the disk store of MOLD message blocks
+-spec load_store(string()) -> {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
+load_store(FileName) ->
+    case file:open(FileName, [read, raw, binary, read_ahead]) of
+        {ok, IoDevice} ->
+            case rebuild_index(IoDevice) of
+                {ok, FileSize, Index} ->
+                    % can't pass raw file:io_device() to other processes,
+                    % so will need to reopened in molderl_recovery process. 
+                    file:close(IoDevice),
+                    lager:info("[molderl] Successfully restored message store from file ~p", [FileName]),
+                    {ok, FileSize, Index};
+                {error, Reason} ->
+                    lager:error("[molderl] Could not restore message store from file ~p because '~p', delete and restart",
+                                [FileName, Reason]),
+                    {error, Reason}
+            end;
+        {error, enoent} ->
+            lager:info("[molderl] Cannot find Message store file ~p, will create new one", [FileName]),
+            {ok, 0, []};
+        {error, Reason} ->
+            lager:error("[molderl] Could not restore message store from file ~p because '~p', delete and restart",
+                        [FileName, Reason]),
+            {error, Reason}
+    end.
+
+% Takes handle to binary file filled with MOLD message blocks and returns a list of indices
+% where each MOLD message block starts (in bytes)
+-spec rebuild_index(file:io_device()) ->
+    {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
+rebuild_index(IoDevice) ->
+    rebuild_index(IoDevice, 0, []).
+
+-spec rebuild_index(file:io_device(), non_neg_integer(), [non_neg_integer()]) ->
+    {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
+rebuild_index(IoDevice, Position, Indices) ->
+    case file:pread(IoDevice, Position, 2) of
+        {ok, <<Length:16/big-integer>>} ->
+            rebuild_index(IoDevice, Position+2+Length, [Position|Indices]);
+        eof ->
+            {ok, Position, lists:reverse(Indices)};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 

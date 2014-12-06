@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/6, send_message/2, send_message/3]).
+-export([start_link/1, create_stream/7, send_message/2, send_message/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -11,7 +11,8 @@
 -compile([{parse_transform, lager_transform}]).
 
 -record(stream, {destination_addr :: {inet:ip4_address(), inet:port_number()},
-                 recovery_port :: inet:port_number()}).
+                 recovery_port :: inet:port_number(),
+                 filename :: string()}).
 
 -record(state, {streams_sup :: pid() , streams = [] :: [#stream{}]} ).
 
@@ -20,10 +21,10 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
--spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), pos_integer())
+-spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), string(), pos_integer())
     -> {'ok', pid()} | {'error', atom()}.
-create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
+create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer) ->
+    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer}).
 
 -spec send_message(pid(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
@@ -44,18 +45,20 @@ init(SupervisorPID) ->
 
     {ok, #state{}}.
 
-handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer},_From,State) ->
-    case conflict_check(Destination, DestinationPort, RecoveryPort, State#state.streams) of
+handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer},_From,State) ->
+    case conflict_check(Destination, DestinationPort, RecoveryPort, FileName, State#state.streams) of
         ok ->
             Spec = ?CHILD(make_ref(),
                           molderl_stream_sup,
-                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer],
+                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer],
                           transient,
                           supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
                 {ok, Pid} ->
                     {_, StreamPid, _, _} = lists:keyfind([molderl_stream], 4, supervisor:which_children(Pid)),
-                    Stream = #stream{destination_addr={Destination,DestinationPort}, recovery_port=RecoveryPort},
+                    Stream = #stream{destination_addr={Destination,DestinationPort},
+                                     recovery_port=RecoveryPort,
+                                     filename=FileName},
                     {reply, {ok, StreamPid}, State#state{streams=[Stream|State#state.streams]}};
                 {error, Error} ->
                     {reply, {error, Error}, State}
@@ -85,16 +88,19 @@ terminate(normal, _State) ->
     ok.
 
 % Make sure there's no destination address or recovery port conflict
--spec conflict_check(inet:ip4_address(), inet:port_number(), inet:port_number(), [#stream{}])
+-spec conflict_check(inet:ip4_address(), inet:port_number(), inet:port_number(), string(), [#stream{}])
     -> 'ok' | {'error', atom()}.
-conflict_check(Destination, DestinationPort, RecoveryPort, Streams) ->
+conflict_check(Destination, DestinationPort, RecoveryPort, FileName, Streams) ->
     case {lists:any(fun(S) -> S#stream.destination_addr =:= {Destination, DestinationPort} end, Streams),
-          lists:any(fun(S) -> S#stream.recovery_port =:= RecoveryPort end, Streams)} of
-        {false, false} ->
+          lists:any(fun(S) -> S#stream.recovery_port =:= RecoveryPort end, Streams),
+          lists:any(fun(S) -> S#stream.filename =:= FileName end, Streams)} of
+        {false, false, false} ->
             ok;
-        {true, _} ->
+        {true, _, _} ->
             {error, destination_address_already_in_use};
-        {_, true} ->
-            {error, recovery_port_already_in_use}
+        {_, true, _} ->
+            {error, recovery_port_already_in_use};
+        {_, _, true} ->
+            {error, cache_file_already_dedicated_to_another_stream}
     end.
 

@@ -67,22 +67,24 @@ gen_messagepacket(StreamName, NextSeq, NumMsgs, EncodedMsgs) ->
 
 %% ------------------------------------------------
 %% Takes a list of binary messages, prepend the
-%% length header needed by MOLD64 to each or them
+%% length header needed by MOLD64 to each of them
 %% and returns the resulting list of encoded msgs,
-%% with number of msgs and total byte size.
+%% plus list of encoded msgs sizes, total number
+%% of msgs and total byte size.
 %% ------------------------------------------------
--spec encode_messages([binary()]) -> {[binary()], non_neg_integer(), non_neg_integer()}.
+-spec encode_messages([binary()]) ->
+    {[binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()}.
 encode_messages(Msgs) ->
-    encode_messages(Msgs, [], 0, 0).
+    encode_messages(Msgs, [], [], 0, 0).
 
--spec encode_messages([binary()], [binary()], non_neg_integer(), non_neg_integer()) ->
-    {[binary()], non_neg_integer(), non_neg_integer()}.
-encode_messages([], EncodedMsgs, NumMsgs, NumBytes) ->
-    {EncodedMsgs, NumMsgs, NumBytes};
-encode_messages([Msg|Msgs], EncodedMsgs, NumMsgs, NumBytes) ->
+-spec encode_messages([binary()], [binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()) ->
+    {[binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()}.
+encode_messages([], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
+    {EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes};
+encode_messages([Msg|Msgs], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
     Length = byte_size(Msg),
     EncodedMsg = <<Length:16/big-integer, Msg/binary>>,
-    encode_messages(Msgs, [EncodedMsg|EncodedMsgs], NumMsgs+1, NumBytes+Length).
+    encode_messages(Msgs,[EncodedMsg|EncodedMsgs],[Length|EncodedMsgsSize],NumMsgs+1,NumBytes+Length).
 
 %% ------------------------------------------------
 %% Given a parent message's length and a child
@@ -172,7 +174,7 @@ encode_messages_test() ->
     ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
                  {[<<4:16/big-integer, <<"quux">>/binary>>,
                    <<3:16/big-integer, <<"bar">>/binary>>,
-                   <<3:16/big-integer, <<"foo">>/binary>>], 3, 10}).
+                   <<3:16/big-integer, <<"foo">>/binary>>], [4,3,3], 3, 10}).
 
 %%% -----------------------------------
 %%% Tests for generating message packet
