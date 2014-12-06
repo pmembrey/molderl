@@ -146,7 +146,6 @@ molderl_test_() ->
 molderl_get_max_message_size_test() ->
     ?_assertEqual(?PACKET_SIZE,molderl_utils:get_max_message_size()).
 
--spec receive_messages(binary(), port(), pos_integer()) -> [{pos_integer(), binary()}].
 receive_messages(StreamName, Socket, Timeout) ->
     ModName = molderl_utils:gen_streamname(StreamName),
     ModNameSize = byte_size(ModName),

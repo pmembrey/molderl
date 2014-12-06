@@ -8,7 +8,7 @@
          gen_endofsession/2,
          gen_streamname/1,
          encode_messages/1,
-         gen_messagepacket/3]).
+         gen_messagepacket/4]).
 
 -export([message_length/2,
          get_max_message_size/0]).
@@ -60,15 +60,10 @@ binary_padder(BinaryToPad) when byte_size(BinaryToPad) < 10 ->
 binary_padder(BinaryToPad) ->
     BinaryToPad.
 
--spec gen_messagepacket(binary(), pos_integer(), [binary()]) -> {non_neg_integer(), binary()}.
-gen_messagepacket(StreamName, NextSeq, EncodedMsgs) ->
-    Count = length(EncodedMsgs),
+-spec gen_messagepacket(binary(), pos_integer(), pos_integer(), [binary()]) -> binary().
+gen_messagepacket(StreamName, NextSeq, NumMsgs, EncodedMsgs) ->
     EncodedMsgsBinary = list_to_binary(EncodedMsgs),
-    {Count, <<StreamName/binary, NextSeq:64, Count:16, EncodedMsgsBinary/binary>>}.
-
--spec encode_messages([binary()]) -> {[binary()], integer(), integer()}.
-encode_messages(Msgs) ->
-    encode_messages(Msgs, [], 0, 0).
+    <<StreamName/binary, NextSeq:64, NumMsgs:16, EncodedMsgsBinary/binary>>.
 
 %% ------------------------------------------------
 %% Takes a list of binary messages, prepend the
@@ -76,9 +71,14 @@ encode_messages(Msgs) ->
 %% and returns the resulting list of encoded msgs,
 %% with number of msgs and total byte size.
 %% ------------------------------------------------
--spec encode_messages([binary()], [binary()], integer(), integer()) -> {[binary()], integer(), integer()}.
+-spec encode_messages([binary()]) -> {[binary()], non_neg_integer(), non_neg_integer()}.
+encode_messages(Msgs) ->
+    encode_messages(Msgs, [], 0, 0).
+
+-spec encode_messages([binary()], [binary()], non_neg_integer(), non_neg_integer()) ->
+    {[binary()], non_neg_integer(), non_neg_integer()}.
 encode_messages([], EncodedMsgs, NumMsgs, NumBytes) ->
-    {lists:reverse(EncodedMsgs), NumMsgs, NumBytes};
+    {EncodedMsgs, NumMsgs, NumBytes};
 encode_messages([Msg|Msgs], EncodedMsgs, NumMsgs, NumBytes) ->
     Length = byte_size(Msg),
     EncodedMsg = <<Length:16/big-integer, Msg/binary>>,
@@ -170,9 +170,9 @@ message_length_test() ->
 %% -----------------------------------
 encode_messages_test() ->
     ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
-                 {[<<3:16/big-integer, <<"foo">>/binary>>,
+                 {[<<4:16/big-integer, <<"quux">>/binary>>,
                    <<3:16/big-integer, <<"bar">>/binary>>,
-                   <<4:16/big-integer, <<"quux">>/binary>>], 3, 10}).
+                   <<3:16/big-integer, <<"foo">>/binary>>], 3, 10}).
 
 %%% -----------------------------------
 %%% Tests for generating message packet
@@ -180,14 +180,14 @@ encode_messages_test() ->
 
 gen_messagepacket_test() ->
     Msgs = [<<"foo">>, <<"bar">>, <<"quux">>],
-    Observed = gen_messagepacket(<<"foo">>, 23, Msgs),
-    Expected = {3, <<<<"foo">>/binary, 23:64, 3:16, <<"foobarquux">>/binary>>},
+    Observed = gen_messagepacket(<<"foo">>, 23, length(Msgs), Msgs),
+    Expected = <<<<"foo">>/binary, 23:64, 3:16, <<"foobarquux">>/binary>>,
     ?assertEqual(Expected, Observed).
 
 gen_messagepacket_empty_test() ->
     Msgs = [],
-    Observed = gen_messagepacket(<<"foo">>, 23, Msgs),
-    Expected = {0, <<<<"foo">>/binary, 23:64, 0:16>>},
+    Observed = gen_messagepacket(<<"foo">>, 23, length(Msgs), Msgs),
+    Expected = <<<<"foo">>/binary, 23:64, 0:16>>,
     ?assertEqual(Expected, Observed).
 
 -endif.

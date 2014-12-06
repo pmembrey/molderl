@@ -16,10 +16,10 @@
 -define(STATE,State#state).
 
 -record(state, {
-                socket :: port(),          % Socket to send data on
-                stream_name,               % Stream name for encoding the response
-                packet_size :: integer(),  % maximum packet size of messages in bytes
-                cache = [] :: list(),      % list of MOLD messages to recover from
+                socket :: port(),             % Socket to send data on
+                stream_name,                  % Stream name for encoding the response
+                packet_size :: pos_integer(), % maximum packet size of messages in bytes
+                cache = [] :: list(),         % list of MOLD messages to recover from
                 % cache number of messages in and size of the cache,
                 % faster than calling length(cache) and byte_size(cache) everytime
                 cache_size_msgs = 0 :: non_neg_integer(),
@@ -34,7 +34,8 @@
 start_link(StreamName, RecoveryPort, PacketSize) ->
     gen_server:start_link(?MODULE, [StreamName, RecoveryPort, PacketSize], []).
 
-store(Pid, Msgs, NumMsgs, NumBytes) ->
+-spec store(pid(), pos_integer(), pos_integer(), [binary()]) -> ok.
+store(Pid, NumMsgs, NumBytes, Msgs) ->
     gen_server:cast(Pid, {store, Msgs, NumMsgs, NumBytes}).
 
 init([StreamName, RecoveryPort, PacketSize]) ->
@@ -55,8 +56,8 @@ init([StreamName, RecoveryPort, PacketSize]) ->
     {ok, State}.
 
 handle_cast({store, Msgs, NumMsgs, NumBytes}, State) ->
-    statsderl:gauge(?STATE.statsd_msgs_key, ?STATE.cache_size_msgs, 0.01),
-    statsderl:gauge(?STATE.statsd_memory_key, ?STATE.cache_size_bytes, 0.01),
+    statsderl:gauge(?STATE.statsd_msgs_key, ?STATE.cache_size_msgs+NumMsgs, 0.01),
+    statsderl:gauge(?STATE.statsd_memory_key, ?STATE.cache_size_bytes+NumBytes, 0.01),
     {noreply, ?STATE{cache=Msgs++?STATE.cache,
                      cache_size_msgs=?STATE.cache_size_msgs+NumMsgs,
                      cache_size_bytes=?STATE.cache_size_bytes+NumBytes}}.
@@ -76,12 +77,13 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             % The math to infer indices is a bit tricky because the cache is in reverse order
             Start = max(?STATE.cache_size_msgs-SequenceNumber-Count+2, 1),
             Len = min(?STATE.cache_size_msgs-SequenceNumber+1, Count),
-            Messages = lists:reverse(lists:sublist(?STATE.cache, Start, Len)),
+            Messages = lists:sublist(?STATE.cache, Start, Len),
 
             % Remove messages if bigger than allowed packet size
             TruncatedMsgs = truncate_messages(Messages, ?STATE.packet_size),
+            {EncodedMsgs, NumMsgs, _NumBytes} = molderl_utils:encode_messages(TruncatedMsgs),
+            Payload = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, NumMsgs, EncodedMsgs),
 
-            {_, Payload} = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, TruncatedMsgs),
             ok = gen_udp:send(?STATE.socket, IP, Port, Payload)
     end,
 
@@ -115,11 +117,11 @@ terminate(Reason, State) ->
 %% with the right size to be at or under the specified packet
 %% size in Mold 64
 %% ------------------------------------------------------------
--spec truncate_messages([binary()], non_neg_integer()) -> [binary()].
+-spec truncate_messages([binary()], pos_integer()) -> [binary()].
 truncate_messages(Messages, PacketSize) ->
     truncate_messages(Messages, PacketSize, 0, []).
 
--spec truncate_messages([binary()], non_neg_integer(), non_neg_integer(), [binary()]) -> [binary()].
+-spec truncate_messages([binary()], pos_integer(), non_neg_integer(), [binary()]) -> [binary()].
 truncate_messages([], _PacketSize, _Size, Acc) ->
     lists:reverse(Acc);
 truncate_messages([Message|Messages], PacketSize, Size, Acc) ->
@@ -143,7 +145,7 @@ truncate_messages_test() ->
         <<"f","o","o","b","a","r","b","a","z">>
     ],
     Packet = truncate_messages(Messages, 40),
-    Expected = [<<>>,<<"x">>,<<"a","b","c","d","e">>,<<"1","2","3">>],
+    Expected = [<<>>, <<"x">>, <<"a","b","c","d","e">>, <<"1","2","3">>],
     ?assertEqual(Packet, Expected).
 
 truncate_messages_empty_test() ->
