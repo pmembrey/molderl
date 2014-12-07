@@ -1,11 +1,10 @@
 
--module(molderl_tests).
+-module(molderl_eunit_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include("../src/molderl.hrl").
-
--define(MCAST_GROUP_IP, {239,192,42,69}).
+-include("molderl_tests.hrl").
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% FIXTURES
@@ -38,11 +37,11 @@ instantiator(_) ->
     {ok, BazSocket} = gen_udp:open(BazPort, [binary, {reuseaddr, true}]),
     inet:setopts(BazSocket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
 
-    {ok, FooPid} = molderl:create_stream(foo,?MCAST_GROUP_IP,FooPort,FooRecPort,LocalHostIP,"/home/abeaulne/molderl/test/foo",100),
-    {ok, BarPid} = molderl:create_stream(bar,?MCAST_GROUP_IP,BarPort,BarRecPort,LocalHostIP,"/home/abeaulne/molderl/test/bar",100),
-    {ok, BazPid} = molderl:create_stream(baz,?MCAST_GROUP_IP,BazPort,BazRecPort,LocalHostIP,"/home/abeaulne/molderl/test/baz",200),
-    ConflictAddr = molderl:create_stream(qux,?MCAST_GROUP_IP,BarPort,8890,LocalHostIP,"/home/abeaulne/molderl/test/qux",100),
-    ConflictPort = molderl:create_stream(bar,?MCAST_GROUP_IP,4321,BarRecPort,LocalHostIP,"/home/abeaulne/molderl/test/bar",100),
+    {ok, FooPid} = molderl:create_stream(foo,?MCAST_GROUP_IP,FooPort,FooRecPort,LocalHostIP,"/tmp/foo",100),
+    {ok, BarPid} = molderl:create_stream(bar,?MCAST_GROUP_IP,BarPort,BarRecPort,LocalHostIP,"/tmp/bar",100),
+    {ok, BazPid} = molderl:create_stream(baz,?MCAST_GROUP_IP,BazPort,BazRecPort,LocalHostIP,"/tmp/baz",200),
+    ConflictAddr = molderl:create_stream(qux,?MCAST_GROUP_IP,BarPort,8890,LocalHostIP,"/tmp/qux",100),
+    ConflictPort = molderl:create_stream(bar,?MCAST_GROUP_IP,4321,BarRecPort,LocalHostIP,"/tmp/bar",100),
     molderl:send_message(FooPid, <<"HelloWorld">>),
     [{Seq1, Msg1}] = receive_messages("foo", FooSocket, 500),
     molderl:send_message(FooPid, <<"HelloWorld">>),
@@ -145,19 +144,4 @@ molderl_test_() ->
 
 molderl_get_max_message_size_test() ->
     ?_assertEqual(?PACKET_SIZE,molderl_utils:get_max_message_size()).
-
-receive_messages(StreamName, Socket, Timeout) ->
-    ModName = molderl_utils:gen_streamname(StreamName),
-    ModNameSize = byte_size(ModName),
-    receive
-        {udp, Socket, _, _, <<ModName:ModNameSize/binary, _:80/integer>>} ->
-            receive_messages(StreamName, Socket, Timeout); % ignore heartbeats
-        {udp, Socket, _, _, <<ModName:ModNameSize/binary, Tail/binary>>} ->
-            <<NextSeq:64/big-integer, Count:16/big-integer, RawMsgs/binary>> = Tail,
-            Msgs = [Msg || <<Size:16/big-integer, Msg:Size/binary>> <= RawMsgs],
-            lists:zip(lists:seq(NextSeq, NextSeq+Count-1), Msgs)
-    after
-        Timeout ->
-            {error, timeout}
-    end.
 
