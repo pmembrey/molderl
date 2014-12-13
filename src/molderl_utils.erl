@@ -84,7 +84,7 @@ encode_messages([], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
 encode_messages([Msg|Msgs], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
     Length = byte_size(Msg),
     EncodedMsg = <<Length:16/big-integer, Msg/binary>>,
-    encode_messages(Msgs,[EncodedMsg|EncodedMsgs],[Length|EncodedMsgsSize],NumMsgs+1,NumBytes+Length).
+    encode_messages(Msgs,[EncodedMsg|EncodedMsgs],[Length+2|EncodedMsgsSize],NumMsgs+1,NumBytes+Length+2).
 
 %% ------------------------------------------------
 %% Given a parent message's length and a child
