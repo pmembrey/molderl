@@ -62,7 +62,7 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                 {ok, Socket} ->
                     State = #state{stream_name = molderl_utils:gen_streamname(StreamName),
                                    destination = Destination,
-                                   sequence_number = length(Index),
+                                   sequence_number = length(Index)+1,
                                    socket = Socket,
                                    destination_port = DestinationPort,
                                    timer_ref = erlang:send_after(ProdInterval, self(), prod),
