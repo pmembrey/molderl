@@ -130,9 +130,9 @@ instantiator(_) ->
         ?_assertEqual([{Seq3, <<"foo">>}, {Seq3+1, <<"bar">>}, {Seq3+2, <<"baz">>}], RecoveredMsgs3),
         ?_assertEqual({Seq1, Msg1}, RecoveredMsg4),
         ?_assertEqual({Seq2, Msg2}, RecoveredMsg5),
-        ?_assertEqual([], RecoveredMsgs6),
+        ?_assertEqual({error, timeout}, RecoveredMsgs6),
         ?_assertEqual([{6, <<"foo">>}, {7, <<"foo">>}], RecoveredMsgs7),
-        ?_assertEqual([], RecoveredMsgs8),
+        ?_assertEqual({error, timeout}, RecoveredMsgs8),
         ?_assertEqual([{7, <<"foo">>}], RecoveredMsgs9)
      ].
 

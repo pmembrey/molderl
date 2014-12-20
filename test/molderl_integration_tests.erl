@@ -17,8 +17,9 @@
 
 -record(state, {stream :: #stream{},
                 sent=[] :: [{pos_integer(), binary()}],
-                inflight=sets:new() :: sets:set({pos_integer(), binary()}),
-                seq_num=1 :: pos_integer()}).
+                inflight=[] :: [{pos_integer(), binary()}],
+                seq_num=1 :: pos_integer(),
+                num_msgs_rcvd=0 :: non_neg_integer()}).
 
 launch() ->
 
@@ -29,28 +30,39 @@ launch() ->
     {ok, [{LocalHostIP,_,_}|_]} = inet:getif(),
     file:delete(File),
     lager:start(),
-    lager:set_loglevel(lager_console_backend, info),
+    lager:set_loglevel(lager_console_backend, debug),
     application:start(molderl),
 
     {ok, Socket} = gen_udp:open(Port, [binary, {reuseaddr, true}]),
     inet:setopts(Socket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
 
-    {ok, Pid} = molderl:create_stream(foo,?MCAST_GROUP_IP,Port,RecPort,LocalHostIP,File,100),
+    {ok, Pid} = molderl:create_stream(foo,?MCAST_GROUP_IP,Port,RecPort,LocalHostIP,File,50),
 
     Stream = #stream{pid=Pid, name="foo", socket=Socket, ip=LocalHostIP, recovery_port=RecPort},
-    loop(#state{stream=Stream}, 100).
+    loop(#state{stream=Stream}, 10).
 
-loop(_State, 0) ->
+loop(#state{inflight=[]}, 0) ->
     lager:info("[SUCCESS] Passed all tests!"),
     clean_up();
-loop(State, NumTests) ->
-    Fmt = "Number of tests left: ~p, Number of message in flight: ~p, number of messages received: ~p",
-    lager:info(Fmt, [NumTests, sets:size(State#state.inflight), State#state.seq_num-1]),
+loop(State, 0) ->
+    Fmt = "No more tests left but still ~p messages in flight, making sure we receive them all",
+    lager:info(Fmt, [length(State#state.inflight)]),
+    case rcv(State) of
+        {passed, Outcome, NewState} ->
+            lager:info(Outcome),
+            loop(NewState, 0);
+        {failed, Reason} ->
+            lager:error(Reason),
+            clean_up()
+    end;
+loop(State=#state{inflight=Inflight, seq_num=SeqNum, num_msgs_rcvd=NumMsgsRcvd}, NumTests) ->
+    Fmt = "[tests left] ~p [msgs in-flight] ~p [msgs sent] ~p [msgs received] ~p",
+    lager:info(Fmt, [NumTests, length(Inflight), SeqNum-1, NumMsgsRcvd]),
     Draw = random:uniform(),
     if
-        Draw < 0.7 ->
+        Draw < 0.4 ->
             TestResult = send(State);
-        Draw < 0.7 ->
+        Draw < 0.8 ->
             TestResult = rcv(State);
         true ->
             TestResult = recover(State)
@@ -65,14 +77,14 @@ loop(State, NumTests) ->
     end.
 
 send(State) ->
-    % generate random payload of random size < 100 bytes
-    Msg = crypto:strong_rand_bytes(random:uniform(100)), 
+    % generate random payload of random size < 10 bytes
+    Msg = crypto:strong_rand_bytes(random:uniform(10)), 
     case molderl:send_message(State#state.stream#stream.pid, Msg) of
         ok ->
             SeqNum = State#state.seq_num,
             Outcome = io_lib:format("[SUCCESS] Sent packet seq num: ~p, msg: ~p", [SeqNum, Msg]),
             Sent = [{SeqNum, Msg}|State#state.sent],
-            Inflight = sets:add_element({SeqNum, Msg}, State#state.inflight),
+            Inflight = [{SeqNum, Msg}|State#state.inflight],
             {passed, Outcome, State#state{sent=Sent, inflight=Inflight, seq_num=SeqNum+1}};
         _ ->
             Fmt = "[FAILURE] Couldn't send packet seq num: ~p, msg: ~p",
@@ -80,85 +92,58 @@ send(State) ->
             {failed, Reason}
     end.
 
-recover(State=#state{seq_num=1}) ->
-    {passed, "[SUCCESS] No packets were sent yet, hence not trying to recover", State};
+recover(State=#state{num_msgs_rcvd=0}) ->
+    {passed, "[SUCCESS] No packets were received yet, hence not trying to recover", State};
 recover(State=#state{stream=Stream}) ->
 
     % first, craft and send recovery request
-    Start = random:uniform(State#state.seq_num-1),
-    % limit number of requested messages to 12 so as to never bust MTU
-    Count = min(12, random:uniform(State#state.seq_num-Start)),
+    Start = random:uniform(State#state.num_msgs_rcvd),
+    % limit number of requested messages to 40 so as to never bust MTU
+    Count = min(40, random:uniform(State#state.num_msgs_rcvd-Start+1)),
     SessionName = molderl_utils:gen_streamname(Stream#stream.name),
     Request = <<SessionName/binary, Start:64, Count:16>>,
     gen_udp:send(Stream#stream.socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
     
     % second, pull out of the sent list the packets expected
     % from recovery reply and add them to in-flight set
-    Requested = lists:sublist(State#state.sent, State#state.seq_num-Start-Count+1, State#state.seq_num-Start),
-    Inflight = sets:union(sets:from_list(Requested), State#state.inflight),
+    lager:info("start: ~p count: ~p", [Start, Count]),
+    Requested = lists:sublist(State#state.sent, State#state.seq_num-Start-Count+1, Count),
+    Inflight = State#state.inflight ++ Requested, 
 
     Fmt = "[SUCCESS] sent recovery request for sequence number ~p count ~p",
     {passed, io_lib:format(Fmt, [Start, Count]), State#state{inflight=Inflight}}.
 
-rcv(State) ->
-    Stream = State#state.stream,
-    rcv(State, receive_messages(Stream#stream.name, Stream#stream.socket, 200)).
-
-rcv(State, []) ->
-    case sets:size(State#state.inflight) of
-        0 ->
-            Outcome = "[SUCCESS] Received all packets that were in flight",
+rcv(State=#state{inflight=[], stream=#stream{name=Name, socket=Socket}}) ->
+    case receive_messages(Name, Socket, 100) of
+        {error, timeout} ->
+            Outcome = "[SUCCESS] Received no packets when none were in flight",
             {passed, Outcome, State};
-        NumInflights ->
-            Fmt = "[FAILURE] Received ~p less packets that were in flight",
-            {failed, io_lib:format(Fmt, [NumInflights])}
+        {ok, Packets} ->
+            Fmt = "[FAILURE] Received ~p packets while none were in flight: ~p",
+            {failed, io_lib:format(Fmt, [length(Packets)])}
     end;
-rcv(State, [Observed|Packets]) ->
-    case sets:is_element(Observed, State#state.inflight) of
+rcv(State=#state{inflight=Inflight, stream=#stream{name=Name, socket=Socket}}) ->
+    case receive_messages(Name, Socket, 100) of
+        {error, timeout} ->
+            Fmt = "[FAILURE] Received no packet while ~p were in flight",
+            {failed, io_lib:format(Fmt, [length(Inflight)])};
+        {ok, Packets} ->
+            rcv(State, Packets, 0)
+    end.
+
+rcv(State=#state{num_msgs_rcvd=NumMsgsRcvd}, [], RcvdMsgs) ->
+    Fmt = "[SUCCESS] Received ~p packets that were in flight",
+    {passed, io_lib:format(Fmt, [RcvdMsgs]), State#state{num_msgs_rcvd=NumMsgsRcvd+RcvdMsgs}};
+rcv(State, [Observed|Packets], RcvdMsgs) ->
+    case lists:member(Observed, State#state.inflight) of
         true ->
-            rcv(State#state{inflight=sets:del_element(Observed, State#state.inflight)}, Packets);
+            Inflight = lists:delete(Observed, State#state.inflight),
+            rcv(State#state{inflight=Inflight}, Packets, RcvdMsgs+1);
         false ->
-            Fmt = "[FAILURE] Received packet not in flight: ~p",
+            Fmt = "[FAILURE] Received packet ~p that was not in flight",
             {failed, io_lib:format(Fmt, [Observed])}
     end.
 
 clean_up() ->
     application:stop(molderl).
-
-%    molderl:send_message(Pid, <<"message01">>),
-%    molderl:send_message(Pid, <<"message02">>),
-%    molderl:send_message(Pid, <<"message03">>),
-%    molderl:send_message(Pid, <<"message04">>),
-%    molderl:send_message(Pid, <<"message05">>),
-%    molderl:send_message(Pid, <<"message06">>),
-%    molderl:send_message(Pid, <<"message07">>),
-%    molderl:send_message(Pid, <<"message08">>),
-%    molderl:send_message(Pid, <<"message09">>),
-%    molderl:send_message(Pid, <<"message10">>),
-%    molderl:send_message(Pid, <<"message11">>),
-%    molderl:send_message(Pid, <<"message12">>),
-%
-%    Expected1 = [{1,<<"message01">>},{2,<<"message02">>},{3,<<"message03">>},{4,<<"message04">>},
-%                 {5,<<"message05">>},{6,<<"message06">>},{7,<<"message07">>},{8,<<"message08">>},
-%                 {9,<<"message09">>},{10,<<"message10">>},{11,<<"message11">>},{12,<<"message12">>}],
-%    Observed1 = receive_messages("foo", Socket, 500),
-%    ?_assertEqual(Observed1, Expected1),
-%
-%    StreamName = molderl_utils:gen_streamname("foo"),
-%
-%    Request1 = <<StreamName/binary, 1:64, 1:16>>,
-%    gen_udp:send(Socket, LocalHostIP, RecPort, Request1),
-%    [RecoveredMsg1] = receive_messages("foo", Socket, 500),
-%    ?_assertEqual(RecoveredMsg1, {1, <<"message01">>}),
-%
-%    Request2 = <<StreamName/binary, 2:64, 1:16>>,
-%    gen_udp:send(Socket, LocalHostIP, RecPort, Request2),
-%    [RecoveredMsg2] = receive_messages("foo", Socket, 500),
-%    ?_assertEqual(RecoveredMsg2, {2, <<"message02">>}),
-%
-%    Request3 = <<StreamName/binary, 3:64, 2:16>>,
-%    gen_udp:send(Socket, LocalHostIP, RecPort, Request3),
-%    [RecoveredMsg3, RecoveredMsg4] = receive_messages("foo", Socket, 500),
-%    ?_assertEqual(RecoveredMsg3, {3, <<"message03">>}),
-%    ?_assertEqual(RecoveredMsg4, {4, <<"message04">>}).
 

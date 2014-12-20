@@ -33,6 +33,7 @@ start_link(StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize) ->
 
 -spec store(pid(), [binary()], [non_neg_integer()], non_neg_integer()) -> ok.
 store(Pid, Msgs, MsgsSize, NumMsgs) ->
+    lager:debug("molderl storing ~p Msgs!!!!!", [NumMsgs]),
     gen_server:cast(Pid, {store, Msgs, MsgsSize, NumMsgs}).
 
 init([StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize]) ->
@@ -61,8 +62,12 @@ handle_cast({store, Msgs, MsgsSize, NumMsgs}, State) ->
     ok = file:write(?STATE.blocks_store, Msgs),
     {Positions, NewFileSize} = lists:mapfoldl(fun(M, S) -> {S, S+M} end, ?STATE.store_size, MsgsSize),
     {noreply, ?STATE{index=?STATE.index++Positions,
-                     last_seq_num=?STATE.last_seq_num+NumMsgs,
-                     store_size=NewFileSize}}.
+                   last_seq_num=?STATE.last_seq_num+NumMsgs,
+                   store_size=NewFileSize}}.
+
+handle_call(Msg, _From, State) ->
+    lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
+    {noreply, State}.
 
 handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/big-integer,Count:16/big-integer>>}, State) ->
     TS = os:timestamp(),
@@ -83,7 +88,8 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             {NumMsgs, TruncatedMsgs} = truncate_messages(Messages, ?STATE.packet_size),
             Payload = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, NumMsgs, TruncatedMsgs),
 
-            ok = gen_udp:send(?STATE.socket, IP, Port, Payload)
+            ok = gen_udp:send(?STATE.socket, IP, Port, Payload),
+            lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs])
     end,
 
     statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
@@ -96,10 +102,6 @@ handle_info({udp, _Client, IP, Port, IllFormedRequest}, State) ->
     Fmt = "[molderl] Received ill-formed recovery request from ~p:~p -> \"~p\".",
     lager:error(Fmt, [IP, Port, IllFormedRequest]),
     ok = inet:setopts(?STATE.socket, [{active, once}]),
-    {noreply, State}.
-
-handle_call(Msg, _From, State) ->
-    lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
