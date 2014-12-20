@@ -24,7 +24,7 @@ to get reliable data transmission.
 molderl is a simple server implementation that will allow Erlang applications
 to send data using this protocol.
 
-### Simple tests how-to
+### Quick Start
 
 Start the server:
 
@@ -41,6 +41,14 @@ Send a message:
 ### Unit tests how-to
 
     $ rebar eunit
+
+### Randomized tests how to
+
+    $ cd molderl/
+    $ rebar compile
+    $ erl -pa ebin/ -pa deps/*/ebin
+    > c("test/molderl_integration_tests.erl").
+    > molderl_integration_tests:launch().
 
 ### Instrumentation
 

@@ -11,9 +11,12 @@
 
 -record(stream, {pid :: pid(),
                  name :: string(),
-                 socket :: inet:socket()}).
+                 socket :: inet:socket(),
+                 ip :: inet:ip4_address(),
+                 recovery_port :: inet:port_number()}).
 
 -record(state, {stream :: #stream{},
+                sent=[] :: [{pos_integer(), binary()}],
                 inflight=sets:new() :: sets:set({pos_integer(), binary()}),
                 seq_num=1 :: pos_integer()}).
 
@@ -34,8 +37,8 @@ launch() ->
 
     {ok, Pid} = molderl:create_stream(foo,?MCAST_GROUP_IP,Port,RecPort,LocalHostIP,File,100),
 
-    Stream = #stream{pid=Pid, socket=Socket, name="foo"},
-    loop(#state{stream=Stream}, 2000).
+    Stream = #stream{pid=Pid, name="foo", socket=Socket, ip=LocalHostIP, recovery_port=RecPort},
+    loop(#state{stream=Stream}, 100).
 
 loop(_State, 0) ->
     lager:info("[SUCCESS] Passed all tests!"),
@@ -45,10 +48,12 @@ loop(State, NumTests) ->
     lager:info(Fmt, [NumTests, sets:size(State#state.inflight), State#state.seq_num-1]),
     Draw = random:uniform(),
     if
-        Draw < 0.8 ->
+        Draw < 0.7 ->
             TestResult = send(State);
+        Draw < 0.7 ->
+            TestResult = rcv(State);
         true ->
-            TestResult = rcv(State)
+            TestResult = recover(State)
     end,
     case TestResult of
         {passed, Outcome, NewState} ->
@@ -60,17 +65,40 @@ loop(State, NumTests) ->
     end.
 
 send(State) ->
-    Msg = crypto:strong_rand_bytes(10), % generate random payload
+    % generate random payload of random size < 100 bytes
+    Msg = crypto:strong_rand_bytes(random:uniform(100)), 
     case molderl:send_message(State#state.stream#stream.pid, Msg) of
         ok ->
-            Outcome = io_lib:format("[SUCCESS] Sent packet seq num: ~p, msg: ~p", [State#state.seq_num, Msg]),
-            Inflight = sets:add_element({State#state.seq_num, Msg}, State#state.inflight),
-            {passed, Outcome, State#state{inflight=Inflight, seq_num=State#state.seq_num+1}};
+            SeqNum = State#state.seq_num,
+            Outcome = io_lib:format("[SUCCESS] Sent packet seq num: ~p, msg: ~p", [SeqNum, Msg]),
+            Sent = [{SeqNum, Msg}|State#state.sent],
+            Inflight = sets:add_element({SeqNum, Msg}, State#state.inflight),
+            {passed, Outcome, State#state{sent=Sent, inflight=Inflight, seq_num=SeqNum+1}};
         _ ->
             Fmt = "[FAILURE] Couldn't send packet seq num: ~p, msg: ~p",
             Reason = io_lib:format(Fmt, [State#state.seq_num, Msg]),
             {failed, Reason}
     end.
+
+recover(State=#state{seq_num=1}) ->
+    {passed, "[SUCCESS] No packets were sent yet, hence not trying to recover", State};
+recover(State=#state{stream=Stream}) ->
+
+    % first, craft and send recovery request
+    Start = random:uniform(State#state.seq_num-1),
+    % limit number of requested messages to 12 so as to never bust MTU
+    Count = min(12, random:uniform(State#state.seq_num-Start)),
+    SessionName = molderl_utils:gen_streamname(Stream#stream.name),
+    Request = <<SessionName/binary, Start:64, Count:16>>,
+    gen_udp:send(Stream#stream.socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
+    
+    % second, pull out of the sent list the packets expected
+    % from recovery reply and add them to in-flight set
+    Requested = lists:sublist(State#state.sent, State#state.seq_num-Start-Count+1, State#state.seq_num-Start),
+    Inflight = sets:union(sets:from_list(Requested), State#state.inflight),
+
+    Fmt = "[SUCCESS] sent recovery request for sequence number ~p count ~p",
+    {passed, io_lib:format(Fmt, [Start, Count]), State#state{inflight=Inflight}}.
 
 rcv(State) ->
     Stream = State#state.stream,
