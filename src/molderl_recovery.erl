@@ -107,7 +107,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(Reason, State) ->
     Fmt = "[molderl] recovery process for stream ~p is exiting because of reason ~p.",
-    lager:error(Fmt, [string:strip(binary_to_list(?STATE.stream_name)), Reason]),
+    lager:info(Fmt, [string:strip(binary_to_list(?STATE.stream_name)), Reason]),
     file:sync(?STATE.blocks_store),
     file:close(?STATE.blocks_store),
     ok = gen_udp:close(?STATE.socket).

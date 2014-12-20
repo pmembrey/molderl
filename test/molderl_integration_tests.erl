@@ -10,9 +10,12 @@
 -compile([{parse_transform, lager_transform}]).
 
 -record(stream, {pid :: pid(),
-                 socket :: inet:socket(),
-                 seq_num=1 :: pos_integer(),
-                 name :: string()}).
+                 name :: string(),
+                 socket :: inet:socket()}).
+
+-record(state, {stream :: #stream{},
+                inflight=sets:new() :: sets:set({pos_integer(), binary()}),
+                seq_num=1 :: pos_integer()}).
 
 launch() ->
 
@@ -31,30 +34,64 @@ launch() ->
 
     {ok, Pid} = molderl:create_stream(foo,?MCAST_GROUP_IP,Port,RecPort,LocalHostIP,File,100),
 
-    loop(#stream{pid=Pid, socket=Socket, name="foo"}, 50).
+    Stream = #stream{pid=Pid, socket=Socket, name="foo"},
+    loop(#state{stream=Stream}, 2000).
 
-loop(_Stream, 0) ->
+loop(_State, 0) ->
+    lager:info("[SUCCESS] Passed all tests!"),
     clean_up();
-loop(Stream, NumTests) ->
-    case test_send_and_receive(Stream) of
-        {passed, NewStream} ->
-            loop(NewStream, NumTests-1);
-        {failed, _Reason} ->
+loop(State, NumTests) ->
+    Fmt = "Number of tests left: ~p, Number of message in flight: ~p, number of messages received: ~p",
+    lager:info(Fmt, [NumTests, sets:size(State#state.inflight), State#state.seq_num-1]),
+    Draw = random:uniform(),
+    if
+        Draw < 0.8 ->
+            TestResult = send(State);
+        true ->
+            TestResult = rcv(State)
+    end,
+    case TestResult of
+        {passed, Outcome, NewState} ->
+            lager:info(Outcome),
+            loop(NewState, NumTests-1);
+        {failed, Reason} ->
+            lager:error(Reason),
             clean_up()
     end.
 
-test_send_and_receive(Stream) ->
-    Msg = <<"message01">>,
-    molderl:send_message(Stream#stream.pid, Msg),
-    Expected = [{Stream#stream.seq_num, Msg}],
-    case receive_messages(Stream#stream.name, Stream#stream.socket, 500) of
-        Expected ->
-            lager:info("[SUCCESS] Passed a send and receive test"),
-            {passed, Stream#stream{seq_num=Stream#stream.seq_num+1}};
-        Observed ->
-            Fmt = "[FAILURE] Test send and receive failed - expected: ~p, observed: ~p",
-            lager:error(Fmt, [Expected, Observed]),
-            {failed, "failed send and receive test"}
+send(State) ->
+    Msg = crypto:strong_rand_bytes(10), % generate random payload
+    case molderl:send_message(State#state.stream#stream.pid, Msg) of
+        ok ->
+            Outcome = io_lib:format("[SUCCESS] Sent packet seq num: ~p, msg: ~p", [State#state.seq_num, Msg]),
+            Inflight = sets:add_element({State#state.seq_num, Msg}, State#state.inflight),
+            {passed, Outcome, State#state{inflight=Inflight, seq_num=State#state.seq_num+1}};
+        _ ->
+            Fmt = "[FAILURE] Couldn't send packet seq num: ~p, msg: ~p",
+            Reason = io_lib:format(Fmt, [State#state.seq_num, Msg]),
+            {failed, Reason}
+    end.
+
+rcv(State) ->
+    Stream = State#state.stream,
+    rcv(State, receive_messages(Stream#stream.name, Stream#stream.socket, 200)).
+
+rcv(State, []) ->
+    case sets:size(State#state.inflight) of
+        0 ->
+            Outcome = "[SUCCESS] Received all packets that were in flight",
+            {passed, Outcome, State};
+        NumInflights ->
+            Fmt = "[FAILURE] Received ~p less packets that were in flight",
+            {failed, io_lib:format(Fmt, [NumInflights])}
+    end;
+rcv(State, [Observed|Packets]) ->
+    case sets:is_element(Observed, State#state.inflight) of
+        true ->
+            rcv(State#state{inflight=sets:del_element(Observed, State#state.inflight)}, Packets);
+        false ->
+            Fmt = "[FAILURE] Received packet not in flight: ~p",
+            {failed, io_lib:format(Fmt, [Observed])}
     end.
 
 clean_up() ->

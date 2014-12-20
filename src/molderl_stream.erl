@@ -137,7 +137,7 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(Reason, State) ->
     ok = gen_udp:close(State#state.socket),
     Fmt = "[molderl] molderl_stream process for stream ~p is exiting because of reason ~p.",
-    lager:error(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
+    lager:info(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
     ok.
 
 -spec flush(#state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
@@ -188,7 +188,7 @@ load_store(FileName) ->
                     {error, Reason}
             end;
         {error, enoent} ->
-            lager:info("[molderl] Cannot find Message store file ~p, will create new one", [FileName]),
+            lager:info("[molderl] Cannot find message store file ~p, will create new one", [FileName]),
             {ok, 0, []};
         {error, Reason} ->
             lager:error("[molderl] Could not restore message store from file ~p because '~p', delete and restart",
