@@ -33,7 +33,6 @@ start_link(StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize) ->
 
 -spec store(pid(), [binary()], [non_neg_integer()], non_neg_integer()) -> ok.
 store(Pid, Msgs, MsgsSize, NumMsgs) ->
-    lager:debug("molderl storing ~p Msgs!!!!!", [NumMsgs]),
     gen_server:cast(Pid, {store, Msgs, MsgsSize, NumMsgs}).
 
 init([StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize]) ->
