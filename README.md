@@ -45,10 +45,9 @@ Send a message:
 ### Randomized tests how to
 
     $ cd molderl/
-    $ rebar compile
-    $ erl -pa ebin/ -pa deps/*/ebin
-    > c("test/molderl_integration_tests.erl").
-    > molderl_integration_tests:launch().
+    $ erlc -o ebin/ -I deps/*/include/ -- deps/*/src/*.erl
+    $ erlc -pa ebin/ -o ebin/ -I include/ -- src/*.erl test/*.erl
+    $ erl -pa ebin/ -pa deps/*/ebin/ -eval 'molderl_integration_tests:launch(), init:stop().'
 
 ### Instrumentation
 

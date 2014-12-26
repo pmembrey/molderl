@@ -7,6 +7,8 @@
 
 -include("molderl_tests.hrl").
 
+-define(MAX_RCVD_ATTEMPTS, 10).
+
 -compile([{parse_transform, lager_transform}]).
 
 -record(stream, {pid :: pid(),
@@ -18,7 +20,8 @@
 -record(state, {stream :: #stream{},
                 sent=[] :: [{pos_integer(), binary()}],
                 inflight=[] :: [{pos_integer(), binary()}],
-                max_seq_num_rcvd=0 :: pos_integer()}).
+                max_seq_num_rcvd=0 :: non_neg_integer(),
+                failed_rcvd_attempts=0 :: non_neg_integer()}).
 
 launch() ->
 
@@ -29,7 +32,7 @@ launch() ->
     {ok, [{LocalHostIP,_,_}|_]} = inet:getif(),
     file:delete(File),
     lager:start(),
-    lager:set_loglevel(lager_console_backend, debug),
+    lager:set_loglevel(lager_console_backend, info),
     application:start(molderl),
 
     {ok, Socket} = gen_udp:open(Port, [binary, {reuseaddr, true}]),
@@ -42,6 +45,10 @@ launch() ->
 
 loop(#state{inflight=[]}, 0) ->
     lager:info("[SUCCESS] Passed all tests!"),
+    clean_up();
+loop(State=#state{failed_rcvd_attempts=?MAX_RCVD_ATTEMPTS}, _NumTests) ->
+    Fmt = "[FAILURE] ~p failed receive attempts while ~p messages are still in flight",
+    lager:error(Fmt, [?MAX_RCVD_ATTEMPTS, length(State#state.inflight)]),
     clean_up();
 loop(State, 0) ->
     Fmt = "No more tests left but still ~p messages in flight, making sure we receive them all",
@@ -59,9 +66,9 @@ loop(State=#state{sent=Sent, inflight=Inflight, max_seq_num_rcvd=MaxSeqNumRcvd},
     lager:info(Fmt, [NumTests, length(Inflight), length(Sent), MaxSeqNumRcvd]),
     Draw = random:uniform(),
     if
-        Draw < 0.9 ->
+        Draw < 0.8 ->
             TestResult = send(State);
-        Draw < 1.1 ->
+        Draw < 0.95 ->
             TestResult = rcv(State);
         true ->
             TestResult = recover(State)
@@ -107,7 +114,7 @@ recover(State=#state{stream=Stream, sent=Sent}) ->
     Count = min(40, random:uniform(State#state.max_seq_num_rcvd-Start+1)),
     SessionName = molderl_utils:gen_streamname(Stream#stream.name),
     Request = <<SessionName/binary, Start:64, Count:16>>,
-    gen_udp:send(Stream#stream.socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
+    ok = gen_udp:send(Stream#stream.socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
     
     % second, pull out of the sent list the packets expected
     % from recovery reply and add them to in-flight set
@@ -126,11 +133,11 @@ rcv(State=#state{inflight=[], stream=#stream{name=Name, socket=Socket}}) ->
             Fmt = "[FAILURE] Received ~p packets while none were in flight: ~p",
             {failed, io_lib:format(Fmt, [length(Packets)])}
     end;
-rcv(State=#state{inflight=Inflight, stream=#stream{name=Name, socket=Socket}}) ->
+rcv(State=#state{inflight=Inflight, failed_rcvd_attempts=Attempts, stream=#stream{name=Name, socket=Socket}}) ->
     case receive_messages(Name, Socket, 100) of
         {error, timeout} ->
-            Fmt = "[FAILURE] Received no packet while ~p were in flight",
-            {failed, io_lib:format(Fmt, [length(Inflight)])};
+            Fmt = "[WARNING] Received no packet while ~p were in flight",
+            {passed, io_lib:format(Fmt, [length(Inflight)]), State#state{failed_rcvd_attempts=Attempts+1}};
         {ok, Packets} ->
             rcv(State, Packets, 0)
     end.

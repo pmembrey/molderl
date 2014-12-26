@@ -3,7 +3,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("../src/molderl.hrl").
+-include("molderl.hrl").
 -include("molderl_tests.hrl").
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
