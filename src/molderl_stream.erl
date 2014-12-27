@@ -102,7 +102,8 @@ handle_cast({send, Message, StartTime}, State) ->
             erlang:cancel_timer(?STATE.timer_ref),
             case flush(State) of
                 {ok, NewState} ->
-                    handle_cast({send, Message, StartTime}, NewState); % reprocess msg now that we have clean buffer
+                    % reprocess msg now that we have clean buffer
+                    handle_cast({send, Message, StartTime}, NewState);
                 {error, Reason} ->
                     {stop, Reason, State}
             end;
@@ -180,7 +181,8 @@ load_store(FileName) ->
                     % can't pass raw file:io_device() to other processes,
                     % so will need to reopened in molderl_recovery process. 
                     file:close(IoDevice),
-                    lager:info("[molderl] Successfully restored message store from file ~p", [FileName]),
+                    Fmt = "[molderl] Successfully restored ~p MOLD packets from file ~p",
+                    lager:info(Fmt, [length(Index), FileName]),
                     {ok, FileSize, Index};
                 {error, Reason} ->
                     lager:error("[molderl] Could not restore message store from file ~p because '~p', delete and restart",
