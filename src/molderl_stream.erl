@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/7, send/3]).
+-export([start_link/8, send/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -17,6 +17,7 @@
                 destination :: inet:ip4_address(),       % The IP address to send / broadcast / multicast to
                 sequence_number = 1 :: pos_integer(),    % Next sequence number
                 socket :: inet:socket(),                 % The socket to send the data on
+                multicast_ttl = 1 :: pos_integer(),      % Default is a TTL of 1 - Packets won't get routed off the local network
                 destination_port :: inet:port_number(),  % Destination port for the data
                 messages = [] :: [binary()],             % List of messages waiting to be encoded and sent
                 message_length = 0 :: non_neg_integer(), % Current length of messages if they were to be encoded in a MOLD64 packet
@@ -30,10 +31,10 @@
                }).
 
 start_link(SupervisorPid, StreamName, Destination, DestinationPort,
-           RecoveryPort, IPAddressToSendFrom, Timer) ->
+           RecoveryPort, IPAddressToSendFrom, Timer, TTL) ->
     gen_server:start_link(?MODULE,
                           [SupervisorPid, StreamName, Destination, DestinationPort,
-                           RecoveryPort, IPAddressToSendFrom, Timer],
+                           RecoveryPort, IPAddressToSendFrom, Timer, TTL],
                           []).
 
 -spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
@@ -41,7 +42,7 @@ send(Pid, Message, StartTime) ->
     gen_server:cast(Pid, {send, Message, StartTime}).
 
 init([SupervisorPID, StreamName, Destination, DestinationPort,
-      RecoveryPort, IPAddressToSendFrom, ProdInterval]) ->
+      RecoveryPort, IPAddressToSendFrom, ProdInterval, TTL]) ->
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
@@ -54,13 +55,15 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
                                     {broadcast, true},
                                     {ip, IPAddressToSendFrom},
                                     {add_membership, {Destination, IPAddressToSendFrom}},
-                                    {multicast_if, IPAddressToSendFrom}]),
+                                    {multicast_if, IPAddressToSendFrom},
+                                    {multicast_ttl, TTL}]),
 
     case Connection of
         {ok, Socket} ->
             State = #state{stream_name = MoldStreamName,
                            destination = Destination,
                            socket = Socket,
+                           multicast_ttl = TTL,
                            destination_port = DestinationPort,
                            timer_ref = erlang:send_after(ProdInterval, self(), prod),
                            prod_interval = ProdInterval,

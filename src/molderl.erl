@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/6, send_message/2, send_message/3]).
+-export([start_link/1, create_stream/7, send_message/2, send_message/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -20,10 +20,10 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
--spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), pos_integer())
+-spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), pos_integer(), pos_integer())
     -> {'ok', pid()} | {'error', atom()}.
-create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer}).
+create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer,TTL) ->
+    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer,TTL}).
 
 -spec send_message(pid(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
@@ -44,12 +44,12 @@ init(SupervisorPID) ->
 
     {ok, #state{}}.
 
-handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer},_From,State) ->
+handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer,TTL},_From,State) ->
     case conflict_check(Destination, DestinationPort, RecoveryPort, State#state.streams) of
         ok ->
             Spec = ?CHILD(make_ref(),
                           molderl_stream_sup,
-                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer],
+                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,Timer,TTL],
                           transient,
                           supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
