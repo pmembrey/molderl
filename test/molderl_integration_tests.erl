@@ -7,7 +7,7 @@
 
 -include("molderl_tests.hrl").
 
--define(MAX_RCVD_ATTEMPTS, 50).
+-define(MAX_RCVD_ATTEMPTS, 10).
 
 -compile([{parse_transform, lager_transform}]).
 
@@ -30,6 +30,7 @@ launch() ->
     File = "/tmp/foo",
     Port = 6666,
     RecPort = 7777,
+    NumTests = 1000,
 
     {ok, [{IP,_,_}|_]} = inet:getif(),
 
@@ -43,7 +44,7 @@ launch() ->
     Stream = #stream{name="foo", ip=IP, port=Port, recovery_port=RecPort, file=File},
     ConnectedStream = launch_stream(Stream),
 
-    loop(#state{stream=ConnectedStream, socket=Socket}, 1000).
+    loop(#state{stream=ConnectedStream, socket=Socket}, NumTests).
 
 loop(#state{inflight=[]}, 0) ->
     lager:info("[SUCCESS] Passed all tests!"),
@@ -68,11 +69,11 @@ loop(State=#state{sent=Sent, inflight=Inflight, max_seq_num_rcvd=MaxSeqNumRcvd},
     lager:info(Fmt, [NumTests, length(Inflight), length(Sent), MaxSeqNumRcvd]),
     Draw = random:uniform(),
     if
-        Draw < 0.8 ->
+        Draw < 0.5 ->
             TestResult = send(State);
-        Draw < 0.95 ->
+        Draw < 0.8 ->
             TestResult = rcv(State);
-        Draw < 0.99 ->
+        Draw < 0.9 ->
             TestResult = recover(State);
         true ->
             TestResult = crash(State)
@@ -101,26 +102,6 @@ send(State=#state{stream=Stream, sent=Sent}) ->
             Reason = io_lib:format(Fmt, [length(Sent)+1, Msg]),
             {failed, Reason}
     end.
-
-recover(State=#state{max_seq_num_rcvd=0}) ->
-    {passed, "[SUCCESS] No packets were received yet, hence not trying to recover", State};
-recover(State=#state{stream=Stream, socket=Socket, sent=Sent}) ->
-
-    % first, craft and send recovery request
-    Start = random:uniform(State#state.max_seq_num_rcvd),
-    % limit number of requested messages to 40 so as to never bust MTU
-    Count = min(40, random:uniform(State#state.max_seq_num_rcvd-Start+1)),
-    SessionName = molderl_utils:gen_streamname(Stream#stream.name),
-    Request = <<SessionName/binary, Start:64, Count:16>>,
-    ok = gen_udp:send(Socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
-    
-    % second, pull out of the sent list the packets expected
-    % from recovery reply and add them to in-flight set
-    Requested = lists:sublist(Sent, length(Sent)-Start-Count+2, Count),
-    Inflight = State#state.inflight ++ Requested, 
-
-    Fmt = "[SUCCESS] Sent recovery request for sequence number ~p count ~p",
-    {passed, io_lib:format(Fmt, [Start, Count]), State#state{inflight=Inflight}}.
 
 rcv(State=#state{inflight=[], stream=#stream{name=Name}, socket=Socket}) ->
     case receive_messages(Name, Socket, 100) of
@@ -154,13 +135,34 @@ rcv(State=#state{max_seq_num_rcvd=MaxSeqNumRcvd}, [{SeqNum, Msg}|Packets], RcvdM
             {failed, io_lib:format(Fmt, [{SeqNum, Msg}])}
     end.
 
+recover(State=#state{max_seq_num_rcvd=0}) ->
+    {passed, "[SUCCESS] No packets were received yet, hence not trying to recover", State};
+recover(State=#state{stream=Stream, socket=Socket, sent=Sent}) ->
+
+    % first, craft and send recovery request
+    Start = random:uniform(State#state.max_seq_num_rcvd),
+    % limit number of requested messages to 40 so as to never bust MTU
+    Count = min(40, random:uniform(State#state.max_seq_num_rcvd-Start+1)),
+    SessionName = molderl_utils:gen_streamname(Stream#stream.name),
+    Request = <<SessionName/binary, Start:64, Count:16>>,
+    ok = gen_udp:send(Socket, Stream#stream.ip, Stream#stream.recovery_port, Request),
+
+    % second, pull out of the sent list the packets expected
+    % from recovery reply and add them to in-flight set
+    Requested = lists:sublist(Sent, length(Sent)-Start-Count+2, Count),
+    Inflight = State#state.inflight ++ Requested,
+
+    Fmt = "[SUCCESS] Sent recovery request for sequence number ~p count ~p",
+    {passed, io_lib:format(Fmt, [Start, Count]), State#state{inflight=Inflight}}.
+
 crash(State) ->
-    application:stop(molderl),
+    timer:sleep(100), % give some time for inflight msgs to be flushed
+    ok = application:stop(molderl),
     Stream = launch_stream(State#state.stream),
     {passed, "[SUCCESS] Toggled molderl on and off", State#state{stream=Stream}}.
 
 launch_stream(Stream=#stream{port=P, recovery_port=RP, file=F, ip=IP}) ->
-    application:start(molderl),
+    ok = application:start(molderl),
     {ok, Pid} = molderl:create_stream(foo, ?MCAST_GROUP_IP, P, RP, IP, F, 50),
     Stream#stream{pid=Pid}.
 

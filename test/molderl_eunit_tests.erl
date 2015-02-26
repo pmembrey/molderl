@@ -12,6 +12,9 @@
 
 start() ->
     io:format(user,"Initiating tests...~n",[]),
+    file:delete("/tmp/foo"),
+    file:delete("/tmp/bar"),
+    file:delete("/tmp/baz"),
     application:start(molderl),
     [].
 
@@ -43,25 +46,25 @@ instantiator(_) ->
     ConflictAddr = molderl:create_stream(qux,?MCAST_GROUP_IP,BarPort,8890,LocalHostIP,"/tmp/qux",100),
     ConflictPort = molderl:create_stream(bar,?MCAST_GROUP_IP,4321,BarRecPort,LocalHostIP,"/tmp/bar",100),
     molderl:send_message(FooPid, <<"HelloWorld">>),
-    [{Seq1, Msg1}] = receive_messages("foo", FooSocket, 500),
+    {ok, [{Seq1, Msg1}]} = receive_messages("foo", FooSocket, 500),
     molderl:send_message(FooPid, <<"HelloWorld">>),
-    [{Seq2, Msg2}] = receive_messages("foo", FooSocket, 500),
+    {ok, [{Seq2, Msg2}]} = receive_messages("foo", FooSocket, 500),
     molderl:send_message(FooPid, <<"foo">>),
     molderl:send_message(FooPid, <<"bar">>),
     molderl:send_message(FooPid, <<"baz">>),
-    Msgs = receive_messages("foo", FooSocket, 500),
+    {ok, Msgs} = receive_messages("foo", FooSocket, 500),
     molderl:send_message(FooPid, <<"foo">>),
     molderl:send_message(BarPid, <<"bar">>),
     molderl:send_message(BazPid, <<"baz">>),
     molderl:send_message(FooPid, <<"foo">>),
     molderl:send_message(BarPid, <<"bar">>),
     molderl:send_message(BazPid, <<"baz">>),
-    BazMsgs = receive_messages("baz", BazSocket, 500),
-    FooMsgs = receive_messages("foo", FooSocket, 500),
-    BarMsgs = receive_messages("bar", BarSocket, 500),
+    {ok, BazMsgs} = receive_messages("baz", BazSocket, 500),
+    {ok, FooMsgs} = receive_messages("foo", FooSocket, 500),
+    {ok, BarMsgs} = receive_messages("bar", BarSocket, 500),
     BigMsg = list_to_binary([random:uniform(100) || _ <- lists:seq(1, ?PACKET_SIZE-200)]),
     molderl:send_message(BazPid, BigMsg),
-    [{_,ExpectedBigMsg}] = receive_messages("baz", BazSocket, 500),
+    {ok, [{_,ExpectedBigMsg}]} = receive_messages("baz", BazSocket, 500),
 
     % by now, Foo stream is like this:
     % [<<"HelloWorld">>, <<"HelloWorld">>, <<"foo">>, <<"bar">>, <<"baz">>, <<"foo">>, <<"foo">>]
@@ -76,44 +79,44 @@ instantiator(_) ->
     % using same port for streaming and recovery
     Request1 = <<SessionName/binary, Seq1:64, 1:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request1),
-    [RecoveredMsg1] = receive_messages("foo", FooSocket, 500),
+    {ok, [RecoveredMsg1]} = receive_messages("foo", FooSocket, 500),
     Request2 = <<SessionName/binary, Seq2:64, 1:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request2),
-    [RecoveredMsg2] = receive_messages("foo", FooSocket, 500),
+    {ok, [RecoveredMsg2]} = receive_messages("foo", FooSocket, 500),
 
     % test recovery multiple msgs
     Seq3 = Seq2+1,
     Request3 = <<SessionName/binary, Seq3:64, 3:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request3),
-    RecoveredMsgs3 = receive_messages("foo", FooSocket, 500),
+    {ok, RecoveredMsgs3} = receive_messages("foo", FooSocket, 500),
     
     % using different ports for streaming and recovery
     QuxPort = 45678,
     {ok, QuxSocket} = gen_udp:open(QuxPort, [binary, {reuseaddr, true}]),
     gen_udp:send(QuxSocket, LocalHostIP, FooRecPort, Request1),
-    [RecoveredMsg4] = receive_messages("foo", QuxSocket, 500),
+    {ok, [RecoveredMsg4]} = receive_messages("foo", QuxSocket, 500),
     gen_udp:send(QuxSocket, LocalHostIP, FooRecPort, Request2),
-    [RecoveredMsg5] = receive_messages("foo", QuxSocket, 500),
+    {ok, [RecoveredMsg5]} = receive_messages("foo", QuxSocket, 500),
 
     % test when requested sequence number > total number of msgs sent
     Request6 = <<SessionName/binary, 100:64, 1:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request6),
-    RecoveredMsgs6 = receive_messages("foo", FooSocket, 500),
+    Result6 = receive_messages("foo", FooSocket, 500),
 
     % test when requested sequence number + requested count > total number of msgs sent
     Request7 = <<SessionName/binary, 6:64, 100:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request7),
-    RecoveredMsgs7 = receive_messages("foo", FooSocket, 500),
+    {ok, RecoveredMsgs7} = receive_messages("foo", FooSocket, 500),
 
     % test when requested count is zero
     Request8 = <<SessionName/binary, 2:64, 0:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request8),
-    RecoveredMsgs8 = receive_messages("foo", FooSocket, 500),
+    Result8 = receive_messages("foo", FooSocket, 500),
 
     % test when requested sequence number starts at very last message
     Request9 = <<SessionName/binary, 7:64, 8:16>>,
     gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request9),
-    RecoveredMsgs9 = receive_messages("foo", FooSocket, 500),
+    {ok, RecoveredMsgs9} = receive_messages("foo", FooSocket, 500),
 
     [
         ?_assertEqual({error, destination_address_already_in_use}, ConflictAddr),
@@ -130,9 +133,9 @@ instantiator(_) ->
         ?_assertEqual([{Seq3, <<"foo">>}, {Seq3+1, <<"bar">>}, {Seq3+2, <<"baz">>}], RecoveredMsgs3),
         ?_assertEqual({Seq1, Msg1}, RecoveredMsg4),
         ?_assertEqual({Seq2, Msg2}, RecoveredMsg5),
-        ?_assertEqual({error, timeout}, RecoveredMsgs6),
+        ?_assertEqual({error, timeout}, Result6),
         ?_assertEqual([{6, <<"foo">>}, {7, <<"foo">>}], RecoveredMsgs7),
-        ?_assertEqual({error, timeout}, RecoveredMsgs8),
+        ?_assertEqual({error, timeout}, Result8),
         ?_assertEqual([{7, <<"foo">>}], RecoveredMsgs9)
      ].
 

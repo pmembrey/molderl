@@ -41,7 +41,7 @@ init([StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize]) ->
 
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}]),
 
-    case file:open(FileName, [read, append, raw, binary, read_ahead, sync]) of
+    case file:open(FileName, [read, append, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
             State = #state{socket             = Socket,
                            stream_name        = molderl_utils:gen_streamname(StreamName),

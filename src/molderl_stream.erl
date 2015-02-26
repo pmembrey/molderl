@@ -177,13 +177,13 @@ load_store(FileName) ->
     case file:open(FileName, [read, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
             case rebuild_index(IoDevice) of
-                {ok, FileSize, Index} ->
+                {ok, FileSize, Indices} ->
                     % can't pass raw file:io_device() to other processes,
                     % so will need to reopened in molderl_recovery process. 
                     file:close(IoDevice),
                     Fmt = "[molderl] Successfully restored ~p MOLD packets from file ~p",
-                    lager:info(Fmt, [length(Index), FileName]),
-                    {ok, FileSize, Index};
+                    lager:info(Fmt, [length(Indices), FileName]),
+                    {ok, FileSize, Indices};
                 {error, Reason} ->
                     lager:error("[molderl] Could not restore message store from file ~p because '~p', delete and restart",
                                 [FileName, Reason]),
@@ -216,4 +216,20 @@ rebuild_index(IoDevice, Position, Indices) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+-ifdef(TEST).
+% display the content of a disk cache, only for debugging purposes
+-spec cache_representation(file:io_device(), [non_neg_integer()]) -> string().
+cache_representation(IoDevice, Indices) ->
+    cache_representation(IoDevice, Indices, 1, []).
+
+-spec cache_representation(file:io_device(), [non_neg_integer()], pos_integer(), [{pos_integer(),binary()}]) -> string().
+cache_representation(_IoDevice, [], _SeqNum, Cache) ->
+    Strings = [io_lib:format("{~B,~p}", [S,M]) || {S,M} <- lists:reverse(Cache)],
+    lists:concat(['[', string:join(Strings, ","), ']']);
+cache_representation(IoDevice, [Index|Indices], SeqNum, Cache) ->
+    {ok, <<Length:16/big-integer>>} = file:pread(IoDevice, Index, 2),
+    {ok, <<Msg/binary>>} = file:pread(IoDevice, Index+2, Length),
+    cache_representation(IoDevice, Indices, SeqNum+1, [{SeqNum, Msg}|Cache]).
+-endif.
 

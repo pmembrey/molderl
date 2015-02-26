@@ -174,7 +174,7 @@ encode_messages_test() ->
     ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
                  {[<<4:16/big-integer, <<"quux">>/binary>>,
                    <<3:16/big-integer, <<"bar">>/binary>>,
-                   <<3:16/big-integer, <<"foo">>/binary>>], [4,3,3], 3, 10}).
+                   <<3:16/big-integer, <<"foo">>/binary>>], [6,5,5], 3, 16}).
 
 %%% -----------------------------------
 %%% Tests for generating message packet
