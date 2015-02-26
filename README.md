@@ -24,7 +24,7 @@ to get reliable data transmission.
 molderl is a simple server implementation that will allow Erlang applications
 to send data using this protocol.
 
-### Simple tests how-to
+### Quick Start
 
 Start the server:
 
@@ -32,7 +32,7 @@ Start the server:
 
 Create a MOLD64 stream:
 
-    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,{192,168,0,1},5000).
+    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,{192,168,0,1},"/tmp/mystream",5000).
 
 Send a message:
 
@@ -41,6 +41,14 @@ Send a message:
 ### Unit tests how-to
 
     $ rebar eunit
+
+### Randomized tests how to
+
+    $ cd molderl/
+    $ cp src/molderl.app.src ebin/molderl.app
+    $ erlc -o ebin/ -I deps/*/include/ deps/*/src/*.erl
+    $ erlc -pa ebin/ -o ebin/ -I include/ src/*.erl test/*.erl
+    $ erl -pa ebin/ -pa deps/*/ebin/ -eval 'molderl_integration_tests:launch(), init:stop().'
 
 ### Instrumentation
 

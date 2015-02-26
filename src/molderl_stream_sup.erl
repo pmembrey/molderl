@@ -4,7 +4,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/6]).
+-export([start_link/7]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -16,9 +16,9 @@
 %% ===================================================================
 
 start_link(StreamName, Destination, DestinationPort,
-           RecoveryPort, IPAddressToSendFrom, Timer) ->
+           RecoveryPort, IPAddressToSendFrom, FileName, Timer) ->
     supervisor:start_link(?MODULE, [StreamName, Destination, DestinationPort,
-                                    RecoveryPort, IPAddressToSendFrom, Timer]).
+                                    RecoveryPort, IPAddressToSendFrom, FileName, Timer]).
 
 %% ===================================================================
 %% Supervisor callbacks
