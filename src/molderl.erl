@@ -57,9 +57,11 @@ handle_call({create_stream, StreamName, Destination, DestinationPort, RecoveryPo
             {ok, [{DefaultIPAddressToSendFrom,_,_}|_]} = inet:getif(),
             IPAddressToSendFrom = proplists:get_value(ipaddresstosendfrom, Options, DefaultIPAddressToSendFrom),
             Timer = proplists:get_value(timer, Options, 50),
+            TTL = proplists:get_value(multicast_ttl, Options, 1),
             Arguments = [{streamname, StreamName}, {destination, Destination},
                          {destinationport, DestinationPort}, {recoveryport, RecoveryPort},
-                         {ipaddresstosendfrom, IPAddressToSendFrom}, {filename, FileName}, {timer, Timer}],
+                         {ipaddresstosendfrom, IPAddressToSendFrom}, {filename, FileName},
+                         {timer, Timer}, {multicast_ttl, TTL}],
             Spec = ?CHILD(make_ref(), molderl_stream_sup, [Arguments], transient, supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
                 {ok, Pid} ->

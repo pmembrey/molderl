@@ -45,6 +45,7 @@ init(Arguments) ->
     {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
     {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
     {timer, ProdInterval} = lists:keyfind(timer, 1, Arguments),
+    {multicast_ttl, TTL} = lists:keyfind(multicast_ttl, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
@@ -59,7 +60,8 @@ init(Arguments) ->
                                           {broadcast, true},
                                           {ip, IPAddressToSendFrom},
                                           {add_membership, {Destination, IPAddressToSendFrom}},
-                                          {multicast_if, IPAddressToSendFrom}]),
+                                          {multicast_if, IPAddressToSendFrom},
+                                          {multicast_ttl, TTL}]),
 
             case Connection of
                 {ok, Socket} ->

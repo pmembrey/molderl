@@ -36,7 +36,7 @@ Create a MOLD64 stream:
 
 or, using (optional) arguments:
 
-    > Options = [{ipaddresstosendfrom, {192,168,0,1}}, {filename, "/tmp/mystream"}, {timer,500}].
+    > Options = [{ipaddresstosendfrom, {192,168,0,1}}, {filename, "/tmp/mystream"}, {timer,500}, {multicast_ttl, 2}].
     > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,Options).
 
 Send a message:
