@@ -2,7 +2,7 @@
 -module(molderl).
 -behaviour(gen_server).
 
--export([start_link/1, create_stream/7, send_message/2, send_message/3]).
+-export([start_link/1, create_stream/4, create_stream/5, send_message/2, send_message/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -21,10 +21,15 @@
 start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
--spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), inet:ip_address(), string(), pos_integer())
+-spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number())
     -> {'ok', pid()} | {'error', atom()}.
-create_stream(StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer) ->
-    gen_server:call(?MODULE,{create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer}).
+create_stream(StreamName,Destination,DestinationPort,RecoveryPort) ->
+    create_stream(StreamName,Destination,DestinationPort,RecoveryPort, []).
+
+-spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), [{atom(), term()}])
+    -> {'ok', pid()} | {'error', atom()}.
+create_stream(StreamName, Destination, DestinationPort, RecoveryPort, Options) ->
+    gen_server:call(?MODULE, {create_stream, StreamName, Destination, DestinationPort, RecoveryPort, Options}).
 
 -spec send_message(pid(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
@@ -45,14 +50,19 @@ init(SupervisorPID) ->
 
     {ok, #state{}}.
 
-handle_call({create_stream,StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer},_From,State) ->
+handle_call({create_stream, StreamName, Destination, DestinationPort, RecoveryPort, Options}, _From, State) ->
+    FileName = proplists:get_value(filename, Options, StreamName),
     case conflict_check(Destination, DestinationPort, RecoveryPort, FileName, State#state.streams) of
         ok ->
-            Spec = ?CHILD(make_ref(),
-                          molderl_stream_sup,
-                          [StreamName,Destination,DestinationPort,RecoveryPort,IPAddressToSendFrom,FileName,Timer],
-                          transient,
-                          supervisor),
+            {ok, [{DefaultIPAddressToSendFrom,_,_}|_]} = inet:getif(),
+            IPAddressToSendFrom = proplists:get_value(ipaddresstosendfrom, Options, DefaultIPAddressToSendFrom),
+            Timer = proplists:get_value(timer, Options, 50),
+            TTL = proplists:get_value(multicast_ttl, Options, 1),
+            Arguments = [{streamname, StreamName}, {destination, Destination},
+                         {destinationport, DestinationPort}, {recoveryport, RecoveryPort},
+                         {ipaddresstosendfrom, IPAddressToSendFrom}, {filename, FileName},
+                         {timer, Timer}, {multicast_ttl, TTL}],
+            Spec = ?CHILD(make_ref(), molderl_stream_sup, [Arguments], transient, supervisor),
             case supervisor:start_child(State#state.streams_sup, Spec) of
                 {ok, Pid} ->
                     {_, StreamPid, _, _} = lists:keyfind([molderl_stream], 4, supervisor:which_children(Pid)),

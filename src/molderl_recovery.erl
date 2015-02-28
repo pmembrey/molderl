@@ -7,7 +7,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/6, store/4]).
+-export([start_link/1, store/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -28,14 +28,21 @@
                 statsd_count_key :: string()
                }).
 
-start_link(StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize) ->
-    gen_server:start_link(?MODULE, [StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize], []).
+start_link(Arguments) ->
+    gen_server:start_link(?MODULE, Arguments, []).
 
 -spec store(pid(), [binary()], [non_neg_integer()], non_neg_integer()) -> ok.
 store(Pid, Msgs, MsgsSize, NumMsgs) ->
     gen_server:cast(Pid, {store, Msgs, MsgsSize, NumMsgs}).
 
-init([StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize]) ->
+init(Arguments) ->
+
+    {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {recoveryport, RecoveryPort} = lists:keyfind(recoveryport, 1, Arguments),
+    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
+    {filesize, FileSize} = lists:keyfind(filesize, 1, Arguments),
+    {index, Index} = lists:keyfind(index, 1, Arguments),
+    {packetsize, PacketSize} = lists:keyfind(packetsize, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
