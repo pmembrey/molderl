@@ -163,7 +163,7 @@ crash(State) ->
 
 launch_stream(Stream=#stream{port=P, recovery_port=RP, file=F, ip=IP}) ->
     ok = application:start(molderl),
-    {ok, Pid} = molderl:create_stream(foo, ?MCAST_GROUP_IP, P, RP, IP, F, 50),
+    {ok, Pid} = molderl:create_stream(foo, ?MCAST_GROUP_IP, P, RP, [{ipaddresstosendfrom,IP},{filename,F}]),
     Stream#stream{pid=Pid}.
 
 clean_up() ->

@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/8, send/3]).
+-export([start_link/1, send/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -30,19 +30,21 @@
                 statsd_memory_key :: string()            %
                }).
 
-start_link(SupervisorPid, StreamName, Destination, DestinationPort,
-           RecoveryPort, IPAddressToSendFrom, FileName, Timer) ->
-    gen_server:start_link(?MODULE,
-                          [SupervisorPid, StreamName, Destination, DestinationPort,
-                           RecoveryPort, IPAddressToSendFrom, FileName, Timer],
-                          []).
+start_link(Arguments) ->
+    gen_server:start_link(?MODULE, Arguments, []).
 
 -spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
 send(Pid, Message, StartTime) ->
     gen_server:cast(Pid, {send, Message, StartTime}).
 
-init([SupervisorPID, StreamName, Destination, DestinationPort,
-      RecoveryPort, IPAddressToSendFrom, FileName, ProdInterval]) ->
+init(Arguments) ->
+
+    {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
+    {destination, Destination} = lists:keyfind(destination, 1, Arguments),
+    {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
+    {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
+    {timer, ProdInterval} = lists:keyfind(timer, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
@@ -50,7 +52,8 @@ init([SupervisorPID, StreamName, Destination, DestinationPort,
         {ok, FileSize, Index} ->
 
             % send yourself a reminder to start recovery process
-            self() ! {initialize, SupervisorPID, StreamName, RecoveryPort, FileName, FileSize, Index, ?PACKET_SIZE},
+            RecoveryArguments = [{filesize, FileSize}|[{index, Index}|[{packetsize, ?PACKET_SIZE}|Arguments]]],
+            self() ! {initialize, RecoveryArguments},
 
             Connection = gen_udp:open(0, [binary,
                                           {broadcast, true},
@@ -111,9 +114,9 @@ handle_cast({send, Message, StartTime}, State) ->
             {noreply, ?STATE{message_length=MessageLength, messages=[Message|?STATE.messages]}}
     end.
 
-handle_info({initialize, SupervisorPID, StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize}, State) ->
-    ArgsList = [StreamName, RecoveryPort, FileName, FileSize, Index, PacketSize],
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, ArgsList, transient, worker),
+handle_info({initialize, Arguments}, State) ->
+    {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
+    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}};
 handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but msg queue empty
@@ -217,19 +220,17 @@ rebuild_index(IoDevice, Position, Indices) ->
             {error, Reason}
     end.
 
--ifdef(TEST).
-% display the content of a disk cache, only for debugging purposes
--spec cache_representation(file:io_device(), [non_neg_integer()]) -> string().
-cache_representation(IoDevice, Indices) ->
-    cache_representation(IoDevice, Indices, 1, []).
-
--spec cache_representation(file:io_device(), [non_neg_integer()], pos_integer(), [{pos_integer(),binary()}]) -> string().
-cache_representation(_IoDevice, [], _SeqNum, Cache) ->
-    Strings = [io_lib:format("{~B,~p}", [S,M]) || {S,M} <- lists:reverse(Cache)],
-    lists:concat(['[', string:join(Strings, ","), ']']);
-cache_representation(IoDevice, [Index|Indices], SeqNum, Cache) ->
-    {ok, <<Length:16/big-integer>>} = file:pread(IoDevice, Index, 2),
-    {ok, <<Msg/binary>>} = file:pread(IoDevice, Index+2, Length),
-    cache_representation(IoDevice, Indices, SeqNum+1, [{SeqNum, Msg}|Cache]).
--endif.
+%% display the content of a disk cache, for debugging purposes. Uncomment if needed.
+%-spec cache_representation(file:io_device(), [non_neg_integer()]) -> string().
+%cache_representation(IoDevice, Indices) ->
+%    cache_representation(IoDevice, Indices, 1, []).
+%
+%-spec cache_representation(file:io_device(), [non_neg_integer()], pos_integer(), [{pos_integer(),binary()}]) -> string().
+%cache_representation(_IoDevice, [], _SeqNum, Cache) ->
+%    Strings = [io_lib:format("{~B,~p}", [S,M]) || {S,M} <- lists:reverse(Cache)],
+%    lists:concat(['[', string:join(Strings, ","), ']']);
+%cache_representation(IoDevice, [Index|Indices], SeqNum, Cache) ->
+%    {ok, <<Length:16/big-integer>>} = file:pread(IoDevice, Index, 2),
+%    {ok, <<Msg/binary>>} = file:pread(IoDevice, Index+2, Length),
+%    cache_representation(IoDevice, Indices, SeqNum+1, [{SeqNum, Msg}|Cache]).
 

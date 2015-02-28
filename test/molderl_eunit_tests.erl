@@ -40,11 +40,12 @@ instantiator(_) ->
     {ok, BazSocket} = gen_udp:open(BazPort, [binary, {reuseaddr, true}]),
     inet:setopts(BazSocket, [{add_membership, {?MCAST_GROUP_IP, {127,0,0,1}}}]),
 
-    {ok, FooPid} = molderl:create_stream(foo,?MCAST_GROUP_IP,FooPort,FooRecPort,LocalHostIP,"/tmp/foo",100),
-    {ok, BarPid} = molderl:create_stream(bar,?MCAST_GROUP_IP,BarPort,BarRecPort,LocalHostIP,"/tmp/bar",100),
-    {ok, BazPid} = molderl:create_stream(baz,?MCAST_GROUP_IP,BazPort,BazRecPort,LocalHostIP,"/tmp/baz",200),
-    ConflictAddr = molderl:create_stream(qux,?MCAST_GROUP_IP,BarPort,8890,LocalHostIP,"/tmp/qux",100),
-    ConflictPort = molderl:create_stream(bar,?MCAST_GROUP_IP,4321,BarRecPort,LocalHostIP,"/tmp/bar",100),
+    {ok, FooPid} = molderl:create_stream(foo,?MCAST_GROUP_IP,FooPort,FooRecPort,[{filename,"/tmp/foo"}]),
+    {ok, BarPid} = molderl:create_stream(bar,?MCAST_GROUP_IP,BarPort,BarRecPort,[{ipaddresstosendfrom,LocalHostIP},{filename,"/tmp/bar"}]),
+    {ok, BazPid} = molderl:create_stream(baz,?MCAST_GROUP_IP,BazPort,BazRecPort,[{filename,"/tmp/baz"},{timer,200}]),
+    ConflictAddr = molderl:create_stream(qux,?MCAST_GROUP_IP,BarPort,8890,[{ipaddresstosendfrom,LocalHostIP},{timer,100}]),
+    ConflictPort = molderl:create_stream(bar,?MCAST_GROUP_IP,4321,BarRecPort,[{ipaddresstosendfrom,LocalHostIP}]),
+
     molderl:send_message(FooPid, <<"HelloWorld">>),
     {ok, [{Seq1, Msg1}]} = receive_messages("foo", FooSocket, 500),
     molderl:send_message(FooPid, <<"HelloWorld">>),

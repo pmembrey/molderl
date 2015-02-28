@@ -32,7 +32,12 @@ Start the server:
 
 Create a MOLD64 stream:
 
-    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,{192,168,0,1},"/tmp/mystream",5000).
+    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889).
+
+or, using (optional) arguments:
+
+    > Options = [{ipaddresstosendfrom, {192,168,0,1}}, {filename, "/tmp/mystream"}, {timer,500}].
+    > {ok, StreamPID} = molderl:create_stream(mystream,{239,0,0,1},8888,8889,Options).
 
 Send a message:
 
@@ -49,6 +54,10 @@ Send a message:
     $ erlc -o ebin/ -I deps/*/include/ deps/*/src/*.erl
     $ erlc -pa ebin/ -o ebin/ -I include/ src/*.erl test/*.erl
     $ erl -pa ebin/ -pa deps/*/ebin/ -eval 'molderl_integration_tests:launch(), init:stop().'
+
+Note that given that packet drops is possible with UDP and the tests do not fully implement
+MOLDUDP64 recovery mechanics, the tests will fail intermittently without there necessarily
+being something wrong.
 
 ### Instrumentation
 
