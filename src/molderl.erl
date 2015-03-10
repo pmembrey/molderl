@@ -29,7 +29,7 @@ create_stream(StreamName,Destination,DestinationPort,RecoveryPort) ->
 -spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), [{atom(), term()}])
     -> {'ok', pid()} | {'error', atom()}.
 create_stream(StreamName, Destination, DestinationPort, RecoveryPort, Options) ->
-    gen_server:call(?MODULE, {create_stream, StreamName, Destination, DestinationPort, RecoveryPort, Options}).
+    gen_server:call(?MODULE, {create_stream, StreamName, Destination, DestinationPort, RecoveryPort, Options}, 60000).
 
 -spec send_message(pid(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
