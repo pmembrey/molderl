@@ -46,7 +46,7 @@ init(Arguments) ->
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
-    {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}]),
+    {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}, {reuseaddr, true}]),
 
     case file:open(FileName, [read, append, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
