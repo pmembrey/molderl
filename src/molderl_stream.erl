@@ -181,6 +181,8 @@ send_heartbeat(State) ->
 load_store(FileName) ->
     case file:open(FileName, [read, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
+            Msg = "[molderl] Rebuilding MOLDUDP64 index from disk cache ~p. This may take up to a minute.",
+            lager:info(Msg, [FileName]),
             case rebuild_index(IoDevice) of
                 {ok, FileSize, Indices} ->
                     % can't pass raw file:io_device() to other processes,
