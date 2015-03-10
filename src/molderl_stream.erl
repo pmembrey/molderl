@@ -25,7 +25,7 @@
                 prod_interval :: pos_integer(),          % Maximum interval at which either partial packets or heartbeats should be sent
                 timer_ref :: reference(),                % reference to timer used for hearbeats and flush interval
                 statsd_latency_key_in :: string(),       %
-                statsd_latency_key_out :: string(),      % cache the StatsD keys to prevent binary_to_list/1 calls 
+                statsd_latency_key_out :: string(),      % cache the StatsD keys to prevent binary_to_list/1 calls
                 statsd_count_key :: string(),            % and concatenation all the time
                 statsd_memory_key :: string()            %
                }).
@@ -61,7 +61,8 @@ init(Arguments) ->
                                           {ip, IPAddressToSendFrom},
                                           {add_membership, {Destination, IPAddressToSendFrom}},
                                           {multicast_if, IPAddressToSendFrom},
-                                          {multicast_ttl, TTL}]),
+                                          {multicast_ttl, TTL},
+                                          {reuseaddr, true}]),
 
             case Connection of
                 {ok, Socket} ->
@@ -122,7 +123,7 @@ handle_info({initialize, Arguments}, State) ->
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
     {noreply, ?STATE{recovery_service=RecoveryProcess}};
 handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but msg queue empty
-    ok = send_heartbeat(State),
+    send_heartbeat(State),
     TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
     {noreply, ?STATE{message_length=0, messages=[], timer_ref=TRef}};
 handle_info(prod, State) -> % Timer triggered a send
