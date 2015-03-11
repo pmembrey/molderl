@@ -182,7 +182,7 @@ send_heartbeat(State) ->
 load_store(FileName) ->
     case file:open(FileName, [read, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
-            Msg = "[molderl] Rebuilding MOLDUDP64 index from disk cache ~p. This may take up to a minute.",
+            Msg = "[molderl] Rebuilding MOLDUDP64 index from disk cache ~p. This may take some time.",
             lager:info(Msg, [FileName]),
             case rebuild_index(IoDevice) of
                 {ok, FileSize, Indices} ->
@@ -211,14 +211,16 @@ load_store(FileName) ->
 -spec rebuild_index(file:io_device()) ->
     {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
 rebuild_index(IoDevice) ->
-    rebuild_index(IoDevice, 0, []).
+    rebuild_index(IoDevice, <<>>, 0, []).
 
--spec rebuild_index(file:io_device(), non_neg_integer(), [non_neg_integer()]) ->
+-spec rebuild_index(file:io_device(), binary(), non_neg_integer(), [non_neg_integer()]) ->
     {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
-rebuild_index(IoDevice, Position, Indices) ->
-    case file:pread(IoDevice, Position, 2) of
-        {ok, <<Length:16/big-integer>>} ->
-            rebuild_index(IoDevice, Position+2+Length, [Position|Indices]);
+rebuild_index(IoDevice, <<Length:16/big-integer, _Data:Length/binary, Tail/binary>>, Position, Indices) ->
+    rebuild_index(IoDevice, Tail, Position+2+Length, [Position|Indices]);
+rebuild_index(IoDevice, BinaryBuffer, Position, Indices) ->
+    case file:read(IoDevice, 64000) of
+        {ok, Data} ->
+            rebuild_index(IoDevice, <<BinaryBuffer/binary, Data/binary>>, Position, Indices);
         eof ->
             {ok, Position, lists:reverse(Indices)};
         {error, Reason} ->
