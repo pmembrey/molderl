@@ -22,7 +22,7 @@
                 packet_size :: pos_integer(),     % maximum packet size of messages in bytes
                 blocks_store :: file:io_device(), % file handle to MOLD message blocks store
                 store_size :: non_neg_integer(),  % size on disk of msg blocks store
-                index :: [integer()],             % indices to MOLD message blocks in above store
+                index :: [integer()],             % indices to MOLD message blocks in above store (reverse order)
                 % cache the StatsD keys to prevent repeated atom_to_list/1 calls and concatenation
                 statsd_latency_key :: string(),
                 statsd_count_key :: string()
@@ -66,10 +66,10 @@ init(Arguments) ->
 
 handle_cast({store, Msgs, MsgsSize, NumMsgs}, State) ->
     ok = file:write(?STATE.blocks_store, Msgs),
-    {Positions, NewFileSize} = lists:mapfoldl(fun(M, S) -> {S, S+M} end, ?STATE.store_size, MsgsSize),
-    {noreply, ?STATE{index=?STATE.index++Positions,
-                   last_seq_num=?STATE.last_seq_num+NumMsgs,
-                   store_size=NewFileSize}}.
+    {Positions, NewFileSize} = map_positions(MsgsSize, ?STATE.store_size),
+    {noreply, ?STATE{index=Positions++?STATE.index,
+                     last_seq_num=?STATE.last_seq_num+NumMsgs,
+                     store_size=NewFileSize}}.
 
 handle_call(Msg, _From, State) ->
     lager:warning("[molderl] Unexpected message in module ~p: ~p",[?MODULE, Msg]),
@@ -87,7 +87,9 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             lager:warning(Fmt2, [SequenceNumber, ?STATE.last_seq_num]);
         false -> % recover msgs from store and send
 
-            Position = lists:nth(SequenceNumber, ?STATE.index),
+            % the accounting for the index is a bit hairy since the indices
+            % are in reverse order
+            Position = lists:nth(?STATE.last_seq_num-SequenceNumber+1, ?STATE.index),
             {ok, Messages} = recover_messages(?STATE.blocks_store, Position, Count),
 
             % Remove messages if bigger than allowed packet size
@@ -154,6 +156,25 @@ recover_messages(File, Position, Count, MsgBlocks) ->
     end.
 
 %% ------------------------------------------------------------
+%% Given a list of messages sizes (in bytes) and an initial file
+%% position (also in bytes), returns a tuple containing (i) the
+%% messages sizes each offsetted with the initial file position
+%% (in reverse order) and (ii) the ending file position if every
+%% message size is added to the initial position
+%% ------------------------------------------------------------
+-spec map_positions([non_neg_integer()], non_neg_integer()) ->
+    {[non_neg_integer()], non_neg_integer()}.
+map_positions(MsgsSize, InitialPosition) ->
+    map_positions(MsgsSize, InitialPosition, []).
+
+-spec map_positions([non_neg_integer()], non_neg_integer(), [non_neg_integer()]) ->
+    {[non_neg_integer()], non_neg_integer()}.
+map_positions([], Position, MsgsOffset) ->
+    {MsgsOffset, Position};
+map_positions([MsgSize|MsgSizes], Position, MsgsOffset) ->
+    map_positions(MsgSizes, Position+MsgSize, [Position|MsgsOffset]).
+
+%% ------------------------------------------------------------
 %% Takes a list of bitstrings, and returns a truncation of
 %% this list which contains just the right number of bitstrings
 %% with the right size to be at or under the specified packet
@@ -177,6 +198,9 @@ truncate_messages([Message|Messages], PacketSize, Size, NumMsgs, Acc) ->
     end.
 
 -ifdef(TEST).
+
+map_positions_test() ->
+    ?assertEqual(map_positions([1,2,1,2,1,2], 100), {[107,106,104,103,101,100], 109}).
 
 truncate_messages_test() ->
     Messages = [
