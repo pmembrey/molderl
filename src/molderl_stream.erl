@@ -222,7 +222,7 @@ rebuild_index(IoDevice, BinaryBuffer, Position, Indices) ->
         {ok, Data} ->
             rebuild_index(IoDevice, <<BinaryBuffer/binary, Data/binary>>, Position, Indices);
         eof ->
-            {ok, Position, lists:reverse(Indices)};
+            {ok, Position, Indices};
         {error, Reason} ->
             {error, Reason}
     end.
