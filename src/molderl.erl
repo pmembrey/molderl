@@ -94,7 +94,8 @@ handle_info({start_molderl_stream_supersup, SupervisorPID}, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(normal, _State) ->
+terminate(Reason, _State) ->
+    lager:warning("[molderl] molderl process exiting because ~p", [Reason]),
     ok.
 
 % Make sure there's no destination address or recovery port conflict
