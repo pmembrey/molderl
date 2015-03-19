@@ -40,7 +40,6 @@ send(Pid, Message, StartTime) ->
 init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
-    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
     {destination, Destination} = lists:keyfind(destination, 1, Arguments),
     {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
     {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
@@ -49,41 +48,34 @@ init(Arguments) ->
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
-    case load_store(FileName) of
-        {ok, FileSize, Index} ->
+    % send yourself a reminder to start recovery process
+    RecoveryArguments = [{packetsize, ?PACKET_SIZE}|Arguments],
+    self() ! {initialize, RecoveryArguments},
 
-            % send yourself a reminder to start recovery process
-            RecoveryArguments = [{filesize, FileSize}|[{index, Index}|[{packetsize, ?PACKET_SIZE}|Arguments]]],
-            self() ! {initialize, RecoveryArguments},
+    Connection = gen_udp:open(0, [binary,
+                                  {broadcast, true},
+                                  {ip, IPAddressToSendFrom},
+                                  {add_membership, {Destination, IPAddressToSendFrom}},
+                                  {multicast_if, IPAddressToSendFrom},
+                                  {multicast_ttl, TTL},
+                                  {reuseaddr, true}]),
 
-            Connection = gen_udp:open(0, [binary,
-                                          {broadcast, true},
-                                          {ip, IPAddressToSendFrom},
-                                          {add_membership, {Destination, IPAddressToSendFrom}},
-                                          {multicast_if, IPAddressToSendFrom},
-                                          {multicast_ttl, TTL},
-                                          {reuseaddr, true}]),
-
-            case Connection of
-                {ok, Socket} ->
-                    State = #state{stream_name = molderl_utils:gen_streamname(StreamName),
-                                   destination = Destination,
-                                   sequence_number = length(Index)+1,
-                                   socket = Socket,
-                                   destination_port = DestinationPort,
-                                   timer_ref = erlang:send_after(ProdInterval, self(), prod),
-                                   prod_interval = ProdInterval,
-                                   statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
-                                   statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                                   statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
-                                   statsd_memory_key = "molderl." ++ atom_to_list(StreamName) ++ ".bytes_sent"},
-                    {ok, State};
-                {error, Reason} ->
-                    lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
-                              [IPAddressToSendFrom, inet:format_error(Reason)]),
-                    {stop, Reason}
-            end;
+    case Connection of
+        {ok, Socket} ->
+            State = #state{stream_name = molderl_utils:gen_streamname(StreamName),
+                           destination = Destination,
+                           socket = Socket,
+                           destination_port = DestinationPort,
+                           timer_ref = erlang:send_after(ProdInterval, self(), prod),
+                           prod_interval = ProdInterval,
+                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
+                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
+                           statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
+                           statsd_memory_key = "molderl." ++ atom_to_list(StreamName) ++ ".bytes_sent"},
+            {ok, State};
         {error, Reason} ->
+            lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
+                      [IPAddressToSendFrom, inet:format_error(Reason)]),
             {stop, Reason}
     end.
 
@@ -119,9 +111,16 @@ handle_cast({send, Message, StartTime}, State) ->
 
 handle_info({initialize, Arguments}, State) ->
     {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
-    {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
-    {noreply, ?STATE{recovery_service=RecoveryProcess}};
+    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
+    case load_store(FileName) of
+        {ok, FileSize, Index} ->
+            RecoveryArgs = [{filesize, FileSize}|[{index, Index}|Arguments]],
+            RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [RecoveryArgs], transient, worker),
+            {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
+            {noreply, ?STATE{sequence_number = length(Index)+1, recovery_service=RecoveryProcess}};
+        {error, Reason} ->
+            {stop, Reason}
+    end;
 handle_info(prod, State=#state{messages=[]}) -> % Timer triggered a send, but msg queue empty
     send_heartbeat(State),
     TRef = erlang:send_after(?STATE.prod_interval, self(), prod),
