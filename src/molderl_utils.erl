@@ -10,9 +10,6 @@
          encode_messages/1,
          gen_messagepacket/4]).
 
--export([message_length/2,
-         get_max_message_size/0]).
-
 -include("molderl.hrl").
 
 %% ------------------------------
@@ -72,51 +69,18 @@ gen_messagepacket(StreamName, NextSeq, NumMsgs, EncodedMsgs) ->
 %% plus list of encoded msgs sizes, total number
 %% of msgs and total byte size.
 %% ------------------------------------------------
--spec encode_messages([binary()]) ->
-    {[binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()}.
+-spec encode_messages([binary()]) -> {[binary()], [non_neg_integer()], non_neg_integer()}.
 encode_messages(Msgs) ->
-    encode_messages(Msgs, [], [], 0, 0).
+    encode_messages(Msgs, [], [], 0).
 
--spec encode_messages([binary()], [binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()) ->
-    {[binary()], [non_neg_integer()], non_neg_integer(), non_neg_integer()}.
-encode_messages([], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
-    {EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes};
-encode_messages([Msg|Msgs], EncodedMsgs, EncodedMsgsSize, NumMsgs, NumBytes) ->
+-spec encode_messages([binary()], [binary()], [non_neg_integer()], non_neg_integer()) ->
+    {[binary()], [non_neg_integer()], non_neg_integer()}.
+encode_messages([], EncodedMsgs, EncodedMsgsSize, NumMsgs) ->
+    {EncodedMsgs, EncodedMsgsSize, NumMsgs};
+encode_messages([Msg|Msgs], EncodedMsgs, EncodedMsgsSize, NumMsgs) ->
     Length = byte_size(Msg),
     EncodedMsg = <<Length:16/big-integer, Msg/binary>>,
-    encode_messages(Msgs,[EncodedMsg|EncodedMsgs],[Length+2|EncodedMsgsSize],NumMsgs+1,NumBytes+Length+2).
-
-%% ------------------------------------------------
-%% Given a parent message's length and a child
-%% message (as a bitstring), returns what would
-%% be the resulting message length if the child
-%% message was to be appended to the parent message
-%% (according to Mold 64 protocol)
-%% ------------------------------------------------
--spec message_length(non_neg_integer(), binary()) -> pos_integer().
-message_length(0,Message) ->
-    % Header is 20 bytes
-    % 2 bytes for length of message
-    % X bytes for message
-    22 + byte_size(Message);
-message_length(Size,Message) ->
-    % Need to add 2 bytes for the length
-    % and X bytes for the message itself
-    Size + 2 + byte_size(Message).
-
-%% ---------------------------------------------------
-%% Return the maximum payload size. Currently this
-%% is hard coded in a header, but ultimately this will
-%% be configurable in order to support jumbo frames or
-%% to allow packets that can fragment.
-%%
-%% As molderl will crash if an app tries to send a
-%% message that's larger than the maximum size, there
-%% needs to be a way to query for that size.
-%% ----------------------------------------------------
--spec get_max_message_size() -> pos_integer().
-get_max_message_size() ->
-    ?PACKET_SIZE.
+    encode_messages(Msgs, [EncodedMsg|EncodedMsgs], [Length+2|EncodedMsgsSize], NumMsgs+1).
 
 -ifdef(TEST).
 
@@ -159,22 +123,13 @@ gen_endofsession_test() ->
   ?assert(gen_endofsession(StreamName,20) == <<StreamName/binary,20:64/big-integer,?END_OF_SESSION:16/big-integer>>).
 
 %% -----------------------------------
-%% Tests for message length computing
-%% -----------------------------------
-message_length_test() ->
-    ?assertEqual(22, message_length(0,<<>>)),
-    ?assertEqual(25, message_length(0,<<"f","o","o">>)),
-    ?assertEqual(3, message_length(1,<<>>)),
-    ?assertEqual(6, message_length(1,<<"f","o","o">>)).
-
-%% -----------------------------------
 %% Tests for encoding messages
 %% -----------------------------------
 encode_messages_test() ->
     ?assertEqual(encode_messages([<<"foo">>,<<"bar">>,<<"quux">>]),
                  {[<<4:16/big-integer, <<"quux">>/binary>>,
                    <<3:16/big-integer, <<"bar">>/binary>>,
-                   <<3:16/big-integer, <<"foo">>/binary>>], [6,5,5], 3, 16}).
+                   <<3:16/big-integer, <<"foo">>/binary>>], [6,5,5], 3}).
 
 %%% -----------------------------------
 %%% Tests for generating message packet

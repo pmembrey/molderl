@@ -146,6 +146,3 @@ molderl_test_() ->
      fun stop/1,
      fun instantiator/1}.
 
-molderl_get_max_message_size_test() ->
-    ?_assertEqual(?PACKET_SIZE,molderl_utils:get_max_message_size()).
-
