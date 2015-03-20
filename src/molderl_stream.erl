@@ -14,22 +14,25 @@
 -type message() :: binary(). % a single binary received and to be multicasted
 -type packet() :: {erlang:timestamp(), [message()]}. % a list of messages of the right size to be multicasted
 
--record(state, {stream_name :: binary(),                  % Name of the stream encoded for MOLD64 (i.e. padded binary)
-                destination :: inet:ip4_address(),        % The IP address to send / broadcast / multicast to
-                sequence_number :: pos_integer(),         % Next sequence number
-                socket :: inet:socket(),                  % The socket to send the data on
-                destination_port :: inet:port_number(),   % Destination port for the data
+-record(info, {stream_name :: binary(),                  % Name of the stream encoded for MOLD64 (i.e. padded binary)
+               destination :: inet:ip4_address(),        % The IP address to send / broadcast / multicast to
+               socket :: inet:socket(),                  % The socket to send the data on
+               destination_port :: inet:port_number(),   % Destination port for the data
+                                                         % to be encoded in a MOLD64 packet
+               recovery_service :: pid() ,               % Pid of the recovery service message
+               prod_interval :: pos_integer(),           % Maximum interval at which either partial packets
+                                                         % or heartbeats should be sent
+               statsd_latency_key_in :: string(),        %
+               statsd_latency_key_out :: string(),       % cache the StatsD keys to prevent binary_to_list/1 calls
+               statsd_count_key :: string()              % and concatenation all the time
+              }).
+
+-record(state, {sequence_number :: pos_integer(),         % Next sequence number
                 packets = [] :: [packet()],               % List of packets ready to be encoded and sent
                 messages = {{0,0,0}, []} :: packet(),     % List of msgs waiting to be long enough to be added to packets
                 buffer_size = 0 :: non_neg_integer(),     % Current length of buffered messages if they were
                                                           % to be encoded in a MOLD64 packet
-                recovery_service :: pid() ,               % Pid of the recovery service message
-                prod_interval :: pos_integer(),           % Maximum interval at which either partial packets
-                                                          % or heartbeats should be sent
-                timer_ref :: reference(),                 % reference to timer used for hearbeats and flush interval
-                statsd_latency_key_in :: string(),        %
-                statsd_latency_key_out :: string(),       % cache the StatsD keys to prevent binary_to_list/1 calls
-                statsd_count_key :: string()              % and concatenation all the time
+                timer_ref :: reference()                  % reference to timer used for hearbeats and flush interval
                }).
 
 start_link(Arguments) ->
@@ -68,16 +71,16 @@ init(Arguments) ->
 
     case Connection of
         {ok, Socket} ->
-            State = #state{stream_name = molderl_utils:gen_streamname(StreamName),
-                           destination = Destination,
-                           socket = Socket,
-                           destination_port = DestinationPort,
-                           timer_ref = erlang:send_after(ProdInterval, self(), prod),
-                           prod_interval = ProdInterval,
-                           statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
-                           statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                           statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent"},
-            {ok, State};
+            Info = #info{stream_name = molderl_utils:gen_streamname(StreamName),
+                         destination = Destination,
+                         socket = Socket,
+                         destination_port = DestinationPort,
+                         prod_interval = ProdInterval,
+                         statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
+                         statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
+                         statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent"},
+            State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
+            {ok, {Info, State}};
         {error, Reason} ->
             lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
                         [IPAddressToSendFrom, inet:format_error(Reason)]),
@@ -95,101 +98,111 @@ handle_cast({send, Msg, _StartTime}, State) when byte_size(Msg)+22 > ?PACKET_SIZ
     {noreply, State};
 
 % second handle a msg when there's no messages in buffer
-handle_cast({send, Msg, StartTime}, OldState=#state{messages={_,[]}}) ->
+handle_cast({send, Msg, StartTime}, {Info, OldState=#state{messages={_,[]}}}) ->
     State = OldState#state{messages={StartTime, [Msg]}, buffer_size=byte_size(Msg)+22},
-    case flush(State) of
+    case flush(Info, State) of
         {ok, NewState} ->
-            {noreply, NewState};
+            {noreply, {Info, NewState}};
         {error, Reason} ->
-            {stop, Reason, State}
+            {stop, Reason, {Info, State}}
     end;
 
 % third handle if the msg is big enough to promotes the current msgs buffer to a packet
-handle_cast({send, Msg, Start}, State=#state{packets=Pckts, messages=Msgs, buffer_size=Size})
+handle_cast({send, Msg, Start}, {Info, State=#state{packets=Pckts, messages=Msgs, buffer_size=Size}})
         when Size+byte_size(Msg)+2 > ?PACKET_SIZE ->
-    handle_cast({send, Msg, Start}, State#state{packets=[Msgs|Pckts], messages={Start, []}, buffer_size=0});
+    NewState = State#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}, buffer_size=0},
+    handle_cast({send, Msg, Start}, {Info, NewState});
 
 % finally handle if the msg is not big enough to promotes the current msgs buffer to a packet
-handle_cast({send, Msg, Start}, OldState=#state{messages={_, Msgs}, buffer_size=Size}) ->
+handle_cast({send, Msg, _}, {Info, OldState=#state{messages={Start, Msgs}, buffer_size=Size}}) ->
     State = OldState#state{messages={Start, [Msg|Msgs]}, buffer_size=Size+byte_size(Msg)+2},
-    case flush(State) of
+    case flush(Info, State) of
         {ok, NewState} ->
-            {noreply, NewState};
+            {noreply, {Info, NewState}};
         {error, Reason} ->
-            {stop, Reason, State}
+            {stop, Reason, {Info, State}}
     end;
 
-handle_cast({sequence_number, SeqNum}, State) ->
-    {noreply, State#state{sequence_number=SeqNum}}.
+handle_cast({sequence_number, SeqNum}, {Info, State}) ->
+    {noreply, {Info, State#state{sequence_number=SeqNum}}}.
 
-handle_info(prod, State=#state{packets=[], messages={_,[]}}) ->
+handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
     % Timer triggered a send, but packets/msgs queue empty
-    send_heartbeat(State),
-    TRef = erlang:send_after(State#state.prod_interval, self(), prod),
-    {noreply, State#state{timer_ref=TRef}};
+    send_heartbeat(Info, State#state.sequence_number),
+    TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
+    {noreply, {Info, State#state{timer_ref=TRef}}};
 
-handle_info(prod, OldState=#state{packets=Pckts, messages=Pckt}) ->
+handle_info(prod, {Info, OldState=#state{packets=Pckts, messages=Msgs}}) ->
     % Timer triggered a send, flush packets/msgs buffer
-    State = OldState#state{packets=[Pckt|Pckts], messages={{0,0,0}, []}},
-    case flush(State) of
+    State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}},
+    case flush(Info, State) of
         {ok, NewState} ->
-            {noreply, NewState};
+            {noreply, {Info, NewState}};
         {error, Reason} ->
-            {stop, Reason, State}
+            {stop, Reason, {Info, State}}
     end;
 
-handle_info({initialize, Arguments}, State) ->
+handle_info({initialize, Arguments}, {Info, State}) ->
     {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
     RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
-    {noreply, State#state{recovery_service=RecoveryProcess}}.
+    {noreply, {Info#info{recovery_service=RecoveryProcess}, State}}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(Reason, State) ->
-    ok = gen_udp:close(State#state.socket),
+terminate(Reason, {Info, _State}) ->
+    ok = gen_udp:close(Info#info.socket),
     Fmt = "[molderl] molderl_stream process for stream ~p is exiting because of reason ~p.",
-    lager:info(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
+    lager:info(Fmt, [string:strip(binary_to_list(Info#info.stream_name)), Reason]),
     ok.
 
--spec flush(#state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
-flush(State=#state{packets=[]}) ->
-    % no packets to send, nothing to do
-    TRef = erlang:send_after(State#state.prod_interval, self(), prod),
+-spec flush(#info{}, #state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
+flush(Info, State=#state{sequence_number=undefined}) ->
+    erlang:cancel_timer(State#state.timer_ref),
+    % can't send messages out because we don't know our sequence number yet
+    TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {ok, State#state{timer_ref=TRef}};
 
-flush(State=#state{sequence_number=undefined}) ->
-    % can't send messages out because we don't know our sequence number yet
-    {ok, State};
-
-flush(State=#state{packets=[{_Start, []}|Pckts]}) -> % empty packet, ignore and go on
-    flush(State#state{packets=Pckts});
-
-flush(State=#state{packets=[{Start, Msgs}|Pckts], sequence_number=SeqNum}) ->
-    % send out the packets in the current queue
+flush(Info=#info{prod_interval=Interval}, State=#state{packets=Pckts}) ->
     erlang:cancel_timer(State#state.timer_ref),
+    case flush(Info, State#state.sequence_number, lists:reverse(Pckts)) of
+        {ok, SeqNum, UnsentPckts} ->
+            TRef = erlang:send_after(Interval, self(), prod),
+            {ok, State#state{sequence_number=SeqNum, packets=UnsentPckts, timer_ref=TRef}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+-spec flush(#info{}, non_neg_integer(), [packet()]) ->
+    {'ok', non_neg_integer(), [packet()]} | {'error', inet:posix()}.
+flush(_Info, SeqNum, []) ->
+    {ok, SeqNum, []};
+
+flush(Info, SeqNum, [{_Start, []}|Pckts]) -> % empty packet, ignore and go on
+    flush(Info, SeqNum, Pckts);
+
+flush(Info=#info{stream_name=Name, socket=Socket}, SeqNum, [{Start, Msgs}|Pckts]) ->
     {EncodedMsgs, EncodedMsgsSize, NumMsgs} = molderl_utils:encode_messages(Msgs),
-    Payload = molderl_utils:gen_messagepacket(State#state.stream_name, SeqNum, NumMsgs, EncodedMsgs),
-    case gen_udp:send(State#state.socket, State#state.destination, State#state.destination_port, Payload) of
+    Payload = molderl_utils:gen_messagepacket(Name, SeqNum, NumMsgs, EncodedMsgs),
+    case gen_udp:send(Socket, Info#info.destination, Info#info.destination_port, Payload) of
         ok ->
-            molderl_recovery:store(State#state.recovery_service, EncodedMsgs, EncodedMsgsSize, NumMsgs),
-            statsderl:timing_now(State#state.statsd_latency_key_out, Start, 0.1),
-            statsderl:increment(State#state.statsd_count_key, 1, 0.1),
-            flush(State#state{packets=Pckts, sequence_number=SeqNum+NumMsgs});
+            molderl_recovery:store(Info#info.recovery_service, EncodedMsgs, EncodedMsgsSize, NumMsgs),
+            statsderl:timing_now(Info#info.statsd_latency_key_out, Start, 0.1),
+            statsderl:increment(Info#info.statsd_count_key, 1, 0.1),
+            flush(Info, SeqNum+NumMsgs, Pckts);
         {error, eagain} -> % retry next cycle
-            TRef = erlang:send_after(State#state.prod_interval, self(), prod),
-            {ok, State#state{timer_ref=TRef}};
+            {ok, SeqNum, lists:reverse([{Start, Msgs}|Pckts])};
         {error, Reason} ->
             Log = "[molderl] Experienced issue ~p (~p) writing to UDP socket. Resetting.",
             lager:error(Log, [Reason, inet:format_error(Reason)]),
             {error, Reason}
     end.
 
--spec send_heartbeat(#state{}) -> 'ok' | {'error', inet:posix() | 'not_owner'}.
-send_heartbeat(State=#state{stream_name=Name, socket=Socket, destination=Destination}) ->
-    Heartbeat = molderl_utils:gen_heartbeat(Name, State#state.sequence_number),
-    gen_udp:send(Socket, Destination, State#state.destination_port, Heartbeat).
+-spec send_heartbeat(#info{}, non_neg_integer()) -> 'ok' | {'error', inet:posix() | 'not_owner'}.
+send_heartbeat(Info=#info{socket=Socket, destination=Destination}, SeqNum) ->
+    Heartbeat = molderl_utils:gen_heartbeat(Info#info.stream_name, SeqNum),
+    gen_udp:send(Socket, Destination, Info#info.destination_port, Heartbeat).
 
 %send_endofsession(State) ->
 %    EndOfSession = molderl_utils:gen_endofsession(State#state.stream_name, State#state.sequence_number),
