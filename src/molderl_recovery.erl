@@ -13,8 +13,6 @@
 
 -compile([{parse_transform, lager_transform}]).
 
--define(STATE,State#state).
-
 -record(state, {
                 socket :: port(),                 % Socket to send data on
                 stream_name :: binary(),          % Stream name for encoding the response
@@ -39,36 +37,29 @@ init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
     {recoveryport, RecoveryPort} = lists:keyfind(recoveryport, 1, Arguments),
-    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
-    {filesize, FileSize} = lists:keyfind(filesize, 1, Arguments),
-    {index, Index} = lists:keyfind(index, 1, Arguments),
     {packetsize, PacketSize} = lists:keyfind(packetsize, 1, Arguments),
+    {filename, FileName} = lists:keyfind(filename, 1, Arguments),
+    {mold_stream, MoldStreamPid} = lists:keyfind(mold_stream, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
+    self() ! {initialize, FileName, MoldStreamPid},
+
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}, {reuseaddr, true}]),
 
-    case file:open(FileName, [read, append, raw, binary, read_ahead]) of
-        {ok, IoDevice} ->
-            State = #state{socket             = Socket,
-                           stream_name        = molderl_utils:gen_streamname(StreamName),
-                           last_seq_num       = length(Index),
-                           packet_size        = PacketSize,
-                           blocks_store       = IoDevice,
-                           store_size         = FileSize,
-                           index              = Index,
-                           statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
-                           statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
-            {ok, State};
-        {error, Reason} ->
-            {stop, Reason}
-    end.
+    State = #state{socket             = Socket,
+                   stream_name        = molderl_utils:gen_streamname(StreamName),
+                   packet_size        = PacketSize,
+                   statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
+                   statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
+
+    {ok, State}.
 
 handle_cast({store, Msgs, MsgsSize, NumMsgs}, State) ->
-    ok = file:write(?STATE.blocks_store, Msgs),
-    {Positions, NewFileSize} = map_positions(MsgsSize, ?STATE.store_size),
-    {noreply, ?STATE{index=Positions++?STATE.index,
-                     last_seq_num=?STATE.last_seq_num+NumMsgs,
+    ok = file:write(State#state.blocks_store, Msgs),
+    {Positions, NewFileSize} = map_positions(MsgsSize, State#state.store_size),
+    {noreply, State#state{index=Positions++State#state.index,
+                     last_seq_num=State#state.last_seq_num+NumMsgs,
                      store_size=NewFileSize}}.
 
 handle_call(Msg, _From, State) ->
@@ -81,46 +72,73 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
     lager:debug(Fmt, [IP,string:strip(binary_to_list(SessionName), right), SequenceNumber, Count]),
 
     % First check recovery request is valid
-    case SequenceNumber < 1 orelse SequenceNumber > ?STATE.last_seq_num of
+    case SequenceNumber < 1 orelse SequenceNumber > State#state.last_seq_num of
         true -> % can't request for sequence number bigger what's been stored...
             Fmt2 = "[molderl] invalid recovery request: requested sequence number: ~p, max sequence number: ~p",
-            lager:warning(Fmt2, [SequenceNumber, ?STATE.last_seq_num]);
+            lager:warning(Fmt2, [SequenceNumber, State#state.last_seq_num]);
         false -> % recover msgs from store and send
 
             % the accounting for the index is a bit hairy since the indices
             % are in reverse order
-            Position = lists:nth(?STATE.last_seq_num-SequenceNumber+1, ?STATE.index),
-            {ok, Messages} = recover_messages(?STATE.blocks_store, Position, Count),
+            Position = lists:nth(State#state.last_seq_num-SequenceNumber+1, State#state.index),
+            {ok, Messages} = recover_messages(State#state.blocks_store, Position, Count),
 
             % Remove messages if bigger than allowed packet size
-            {NumMsgs, TruncatedMsgs} = truncate_messages(Messages, ?STATE.packet_size),
-            Payload = molderl_utils:gen_messagepacket(?STATE.stream_name, SequenceNumber, NumMsgs, TruncatedMsgs),
+            {NumMsgs, TruncatedMsgs} = truncate_messages(Messages, State#state.packet_size),
+            Payload = molderl_utils:gen_messagepacket(State#state.stream_name, SequenceNumber, NumMsgs, TruncatedMsgs),
 
-            ok = gen_udp:send(?STATE.socket, IP, Port, Payload),
+            ok = gen_udp:send(State#state.socket, IP, Port, Payload),
             lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs])
     end,
 
-    statsderl:timing_now(?STATE.statsd_latency_key, TS, 0.01),
-    statsderl:increment(?STATE.statsd_count_key, 1, 0.01),
+    statsderl:timing_now(State#state.statsd_latency_key, TS, 0.01),
+    statsderl:increment(State#state.statsd_count_key, 1, 0.01),
 
-    ok = inet:setopts(?STATE.socket, [{active, once}]),
+    ok = inet:setopts(State#state.socket, [{active, once}]),
 
     {noreply, State};
 handle_info({udp, _Client, IP, Port, IllFormedRequest}, State) ->
     Fmt = "[molderl] Received ill-formed recovery request from ~p:~p -> \"~p\".",
     lager:error(Fmt, [IP, Port, IllFormedRequest]),
-    ok = inet:setopts(?STATE.socket, [{active, once}]),
-    {noreply, State}.
+    ok = inet:setopts(State#state.socket, [{active, once}]),
+    {noreply, State};
+
+handle_info({initialize, FileName, MoldStreamPid}, State) ->
+    case file:open(FileName, [read, append, raw, binary, read_ahead]) of
+        {ok, IoDevice} ->
+            Log = "[molderl] Rebuilding MOLDUDP64 index from disk cache ~p. This may take some time.",
+            lager:info(Log, [FileName]),
+            case rebuild_index(IoDevice) of
+                {ok, FileSize, Index} ->
+                    SeqNum = length(Index),
+                    Fmt = "[molderl] Successfully restored ~p MOLD packets from file ~p",
+                    lager:info(Fmt, [SeqNum, FileName]),
+                    ok = molderl_stream:set_sequence_number(MoldStreamPid, SeqNum+1),
+                    NewState = State#state{last_seq_num=SeqNum,
+                                           blocks_store=IoDevice,
+                                           store_size=FileSize,
+                                           index=Index},
+                    {noreply, NewState};
+                {error, Reason} ->
+                    Msg = "[molderl] Could not restore message store from file ~p because '~p', delete and restart",
+                    lager:error(Msg, [FileName, Reason]),
+                    {stop, Reason}
+            end;
+        {error, Reason} ->
+            Log = "[molderl] Could not restore message store from file ~p because '~p', delete and restart",
+            lager:error(Log, [FileName, Reason]),
+            {stop, Reason}
+    end.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(Reason, State) ->
     Fmt = "[molderl] recovery process for stream ~p is exiting because of reason ~p.",
-    lager:info(Fmt, [string:strip(binary_to_list(?STATE.stream_name)), Reason]),
-    file:sync(?STATE.blocks_store),
-    file:close(?STATE.blocks_store),
-    ok = gen_udp:close(?STATE.socket).
+    lager:info(Fmt, [string:strip(binary_to_list(State#state.stream_name)), Reason]),
+    file:sync(State#state.blocks_store),
+    file:close(State#state.blocks_store),
+    ok = gen_udp:close(State#state.socket).
 
 %% ------------------------------------------------------------
 %% Given an io_device(), a position in bytes and a message
@@ -196,6 +214,41 @@ truncate_messages([Message|Messages], PacketSize, Size, NumMsgs, Acc) ->
         false ->
             truncate_messages(Messages, PacketSize, TotalSize, NumMsgs+1, [Message|Acc])
     end.
+
+% Takes handle to binary file filled with MOLD message blocks and returns a list of indices
+% where each MOLD message block starts (in bytes)
+-spec rebuild_index(file:io_device()) ->
+    {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
+rebuild_index(IoDevice) ->
+    rebuild_index(IoDevice, <<>>, 0, []).
+
+-spec rebuild_index(file:io_device(), binary(), non_neg_integer(), [non_neg_integer()]) ->
+    {'ok', non_neg_integer(), [non_neg_integer()]} | {'error', term()}.
+rebuild_index(IoDevice, <<Length:16/big-integer, _Data:Length/binary, Tail/binary>>, Position, Indices) ->
+    rebuild_index(IoDevice, Tail, Position+2+Length, [Position|Indices]);
+rebuild_index(IoDevice, BinaryBuffer, Position, Indices) ->
+    case file:read(IoDevice, 64000) of
+        {ok, Data} ->
+            rebuild_index(IoDevice, <<BinaryBuffer/binary, Data/binary>>, Position, Indices);
+        eof ->
+            {ok, Position, Indices};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+%%% display the content of a disk cache, for debugging purposes. Uncomment if needed.
+%%-spec cache_representation(file:io_device(), [non_neg_integer()]) -> string().
+%%cache_representation(IoDevice, Indices) ->
+%%    cache_representation(IoDevice, Indices, 1, []).
+%%
+%%-spec cache_representation(file:io_device(), [non_neg_integer()], pos_integer(), [{pos_integer(),binary()}]) -> string().
+%%cache_representation(_IoDevice, [], _SeqNum, Cache) ->
+%%    Strings = [io_lib:format("{~B,~p}", [S,M]) || {S,M} <- lists:reverse(Cache)],
+%%    lists:concat(['[', string:join(Strings, ","), ']']);
+%%cache_representation(IoDevice, [Index|Indices], SeqNum, Cache) ->
+%%    {ok, <<Length:16/big-integer>>} = file:pread(IoDevice, Index, 2),
+%%    {ok, <<Msg/binary>>} = file:pread(IoDevice, Index+2, Length),
+%%    cache_representation(IoDevice, Indices, SeqNum+1, [{SeqNum, Msg}|Cache]).
 
 -ifdef(TEST).
 
