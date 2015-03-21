@@ -126,6 +126,11 @@ handle_cast({send, Msg, _}, {Info, OldState=#state{messages={Start, Msgs}, buffe
 handle_cast({sequence_number, SeqNum}, {Info, State}) ->
     {noreply, {Info, State#state{sequence_number=SeqNum}}}.
 
+handle_info(prod, {Info, State=#state{sequence_number=undefined}}) ->
+    % can't send heartbeats out because we don't know our sequence number yet
+    TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
+    {noreply, {Info, State#state{timer_ref=TRef}}};
+
 handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
     % Timer triggered a send, but packets/msgs queue empty
     send_heartbeat(Info, State#state.sequence_number),
