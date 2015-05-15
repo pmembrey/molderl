@@ -14,13 +14,14 @@
 -compile([{parse_transform, lager_transform}]).
 
 -record(state, {
-                socket :: port(),                 % Socket to send data on
-                stream_name :: binary(),          % Stream name for encoding the response
-                last_seq_num :: pos_integer(),    % sequence number of last msg block stored
-                packet_size :: pos_integer(),     % maximum packet size of messages in bytes
-                blocks_store :: file:io_device(), % file handle to MOLD message blocks store
-                store_size :: non_neg_integer(),  % size on disk of msg blocks store
-                index :: [integer()],             % indices to MOLD message blocks in above store (reverse order)
+                socket :: port(),                    % Socket to send data on
+                stream_name :: binary(),             % Stream name for encoding the response
+                last_seq_num :: pos_integer(),       % sequence number of last msg block stored
+                packet_size :: pos_integer(),        % maximum packet size of messages in bytes
+                blocks_store :: file:io_device(),    % file handle to MOLD message blocks store
+                store_size :: non_neg_integer(),     % size on disk of msg blocks store
+                index :: [integer()],                % indices to MOLD message blocks in above store (reverse order)
+                max_recovery_count :: pos_integer(), % ignore recovery requests with counts above this
                 % cache the StatsD keys to prevent repeated atom_to_list/1 calls and concatenation
                 statsd_latency_key :: string(),
                 statsd_count_key :: string()
@@ -40,6 +41,7 @@ init(Arguments) ->
     {packetsize, PacketSize} = lists:keyfind(packetsize, 1, Arguments),
     {filename, FileName} = lists:keyfind(filename, 1, Arguments),
     {mold_stream, MoldStreamPid} = lists:keyfind(mold_stream, 1, Arguments),
+    {max_recovery_count, MaxRecoveryCount} = lists:keyfind(max_recovery_count, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
@@ -50,6 +52,7 @@ init(Arguments) ->
     State = #state{socket             = Socket,
                    stream_name        = molderl_utils:gen_streamname(StreamName),
                    packet_size        = PacketSize,
+                   max_recovery_count = MaxRecoveryCount,
                    statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
 
@@ -72,11 +75,8 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
     lager:debug(Fmt, [IP,string:strip(binary_to_list(SessionName), right), SequenceNumber, Count]),
 
     % First check recovery request is valid
-    case SequenceNumber < 1 orelse SequenceNumber > State#state.last_seq_num of
-        true -> % can't request for sequence number bigger what's been stored...
-            Fmt2 = "[molderl] invalid recovery request: requested sequence number: ~p, max sequence number: ~p",
-            lager:warning(Fmt2, [SequenceNumber, State#state.last_seq_num]);
-        false -> % recover msgs from store and send
+    case validate_request(SequenceNumber, Count, State#state.last_seq_num, State#state.max_recovery_count) of
+        ok -> % recover msgs from store and send
 
             % the accounting for the index is a bit hairy since the indices
             % are in reverse order
@@ -86,7 +86,10 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             Payload = molderl_utils:gen_messagepacket(State#state.stream_name, SequenceNumber, NumMsgs, Messages),
 
             ok = gen_udp:send(State#state.socket, IP, Port, Payload),
-            lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs])
+            lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs]);
+
+        {error, Reason} ->
+            lager:warning("[molderl] Unable to service recovery request from ~p because ~s. Ignoring.", [IP, Reason])
     end,
 
     statsderl:timing_now(State#state.statsd_latency_key, TS, 0.01),
@@ -137,6 +140,26 @@ terminate(Reason, State) ->
     file:sync(State#state.blocks_store),
     file:close(State#state.blocks_store),
     ok = gen_udp:close(State#state.socket).
+
+%% -------------------------------------------------------------
+%% Validate a recovery request. Check that the requested
+%% sequence number is bigger than zero but smaller than the
+%% biggest sequence number that was sent out. Check that the
+%% request count is smaller than the maximum request count.
+%% ------------------------------------------------------------
+-spec validate_request(integer(), integer(), pos_integer(), pos_integer()) ->
+    'ok' | {'error', string()}.
+validate_request(_SeqNum, Count, _MaxSeqNum, MaxCount) when Count>MaxCount ->
+    Fmt = "requested count ~p is bigger than configured maximum request count ~p",
+    {error, io_lib:format(Fmt, [Count, MaxCount])};
+validate_request(SeqNum, _Count, _MaxSeqNum, _MaxCount) when SeqNum =< 0 ->
+    Fmt = "requested sequence number ~p is smaller or equal to zero",
+    {error, io_lib:format(Fmt, [SeqNum])};
+validate_request(SeqNum, _Count, MaxSeqNum, _MaxCount) when SeqNum>MaxSeqNum ->
+    Fmt = "requested sequence number ~p is bigger than any MoldUDP64 messages sent out (~p)",
+    {error, io_lib:format(Fmt, [SeqNum, MaxSeqNum])};
+validate_request(_SeqNum, _Count, _MaxSeqNum, _MaxCount) ->
+    ok.
 
 %% -------------------------------------------------------------
 %% Given an io_device(), a position in bytes and a message block
