@@ -100,9 +100,19 @@ instantiator(_) ->
     {ok, [RecoveredMsg5]} = receive_messages("foo", QuxSocket, 500),
 
     % test when requested sequence number > total number of msgs sent
-    Request6 = <<SessionName/binary, 100:64, 1:16>>,
-    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request6),
-    Result6 = receive_messages("foo", FooSocket, 500),
+    Request6a = <<SessionName/binary, 100:64, 1:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request6a),
+    Result6a = receive_messages("foo", FooSocket, 500),
+
+    % test when requested sequence number <= 0
+    Request6b = <<SessionName/binary, 0:64, 1:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request6b),
+    Result6b = receive_messages("foo", FooSocket, 500),
+
+    % test when requested count > max recovery count
+    Request6c = <<SessionName/binary, 1:64, 5000:16>>,
+    gen_udp:send(FooSocket, LocalHostIP, FooRecPort, Request6c),
+    Result6c = receive_messages("foo", FooSocket, 500),
 
     % test when requested sequence number + requested count > total number of msgs sent
     Request7 = <<SessionName/binary, 6:64, 100:16>>,
@@ -134,7 +144,9 @@ instantiator(_) ->
         ?_assertEqual([{Seq3, <<"foo">>}, {Seq3+1, <<"bar">>}, {Seq3+2, <<"baz">>}], RecoveredMsgs3),
         ?_assertEqual({Seq1, Msg1}, RecoveredMsg4),
         ?_assertEqual({Seq2, Msg2}, RecoveredMsg5),
-        ?_assertEqual({error, timeout}, Result6),
+        ?_assertEqual({error, timeout}, Result6a),
+        ?_assertEqual({error, timeout}, Result6b),
+        ?_assertEqual({error, timeout}, Result6c),
         ?_assertEqual([{6, <<"foo">>}, {7, <<"foo">>}], RecoveredMsgs7),
         ?_assertEqual({error, timeout}, Result8),
         ?_assertEqual([{7, <<"foo">>}], RecoveredMsgs9)
