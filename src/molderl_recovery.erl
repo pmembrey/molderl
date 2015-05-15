@@ -81,11 +81,9 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             % the accounting for the index is a bit hairy since the indices
             % are in reverse order
             Position = lists:nth(State#state.last_seq_num-SequenceNumber+1, State#state.index),
-            {ok, Messages} = recover_messages(State#state.blocks_store, Position, Count),
+            {ok, NumMsgs, Messages} = recover_messages(State#state.blocks_store,Position,Count,State#state.packet_size,20,0,[]),
 
-            % Remove messages if bigger than allowed packet size
-            {NumMsgs, TruncatedMsgs} = truncate_messages(Messages, State#state.packet_size),
-            Payload = molderl_utils:gen_messagepacket(State#state.stream_name, SequenceNumber, NumMsgs, TruncatedMsgs),
+            Payload = molderl_utils:gen_messagepacket(State#state.stream_name, SequenceNumber, NumMsgs, Messages),
 
             ok = gen_udp:send(State#state.socket, IP, Port, Payload),
             lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs])
@@ -140,35 +138,53 @@ terminate(Reason, State) ->
     file:close(State#state.blocks_store),
     ok = gen_udp:close(State#state.socket).
 
+%% -------------------------------------------------------------
+%% Given an io_device(), a position in bytes and a message block
+%% count, returns the msg blocks in a list of binaries. Stop
+%% adding msgs if their size would exceed MoldUDP64 packet size
 %% ------------------------------------------------------------
-%% Given an io_device(), a position in bytes and a message
-%% block count, returns the msg blocks in a list of binaries
-%% ------------------------------------------------------------
--spec recover_messages(file:io_device(), non_neg_integer(), non_neg_integer()) ->
-    {'ok', [binary()]} | {'error', term()}.
-recover_messages(File, Position, Count) ->
-    recover_messages(File, Position, Count, []).
+-spec recover_messages(file:io_device(), non_neg_integer(), non_neg_integer(),
+                       pos_integer(), pos_integer(), non_neg_integer(), [binary()]) ->
+    {'ok', non_neg_integer(), [binary()]} | {'error', term()}.
+recover_messages(_File, _Pos, 0, _MaxSize, _Size, NumMsgs, MsgBlocks) ->
+    {ok, NumMsgs, lists:reverse(MsgBlocks)};
+recover_messages(File, Pos, Count, MaxSize, Size, NumMsgs, MsgBlocks) ->
+    case read_one_block(File, Pos) of
+        {ok, Len, Msg} ->
+            case Size+2+Len > MaxSize of
+                true ->
+                    {ok, NumMsgs, lists:reverse(MsgBlocks)};
+                false ->
+                    MsgBlock = <<Len:16, Msg:Len/binary>>,
+                    recover_messages(File, Pos+2+Len, Count-1, MaxSize, Size+2+Len, NumMsgs+1, [MsgBlock|MsgBlocks])
+            end;
+        eof ->
+            % client asked for more msg blocks than exist,
+            % return what is there
+            {ok, NumMsgs, lists:reverse(MsgBlocks)};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
--spec recover_messages(file:io_device(), non_neg_integer(), non_neg_integer(), [binary()]) ->
-    {'ok', [binary()]} | {'error', term()}.
-recover_messages(_File, _Position, 0, MsgBlocks) ->
-    {ok, lists:reverse(MsgBlocks)};
-recover_messages(File, Position, Count, MsgBlocks) ->
-    case file:pread(File, Position, 2) of
-        {ok, <<Length:16/big-integer>>} ->
-            case file:pread(File, Position+2, Length) of
+%% -------------------------------------------------------------
+%% Reads a message at position Pos in the file, returns the length
+%% of the message and the message itself
+%% ------------------------------------------------------------
+-spec read_one_block(file:io_device(), non_neg_integer()) ->
+    {'ok', non_neg_integer(), binary()} | {'error', term()} | 'eof'.
+read_one_block(File, Pos) ->
+    case file:pread(File, Pos, 2) of
+        {ok, <<Len:16/big-integer>>} ->
+            case file:pread(File, Pos+2, Len) of
                 {ok, <<Msg/binary>>} ->
-                    MsgBlock = <<Length:16/big-integer, Msg/binary>>,
-                    recover_messages(File, Position+2+Length, Count-1, [MsgBlock|MsgBlocks]);
+                    {ok, Len, Msg};
                 eof ->
                     {error, ill_ended_msg_store};
                 {error, Reason} ->
                     {error, Reason}
             end;
         eof ->
-            % client asked for more msg blocks than exist,
-            % return what is there
-            {ok, lists:reverse(MsgBlocks)};
+            eof;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -191,29 +207,6 @@ map_positions([], Position, MsgsOffset) ->
     {MsgsOffset, Position};
 map_positions([MsgSize|MsgSizes], Position, MsgsOffset) ->
     map_positions(MsgSizes, Position+MsgSize, [Position|MsgsOffset]).
-
-%% ------------------------------------------------------------
-%% Takes a list of bitstrings, and returns a truncation of
-%% this list which contains just the right number of bitstrings
-%% with the right size to be at or under the specified packet
-%% size in MOLDUDP64
-%% ------------------------------------------------------------
--spec truncate_messages([binary()], pos_integer()) -> {non_neg_integer(), [binary()]}.
-truncate_messages(Messages, PacketSize) ->
-    truncate_messages(Messages, PacketSize, 20, 0, []).
-
--spec truncate_messages([binary()], pos_integer(), pos_integer(), non_neg_integer(), [binary()]) ->
-    {non_neg_integer(), [binary()]}.
-truncate_messages([], _PacketSize, _Size, NumMsgs, Acc) ->
-    {NumMsgs, lists:reverse(Acc)};
-truncate_messages([Message|Messages], PacketSize, Size, NumMsgs, Acc) ->
-    TotalSize = Size+byte_size(Message),
-    case TotalSize > PacketSize of
-        true ->
-            {NumMsgs, lists:reverse(Acc)};
-        false ->
-            truncate_messages(Messages, PacketSize, TotalSize, NumMsgs+1, [Message|Acc])
-    end.
 
 % Takes handle to binary file filled with MOLD message blocks and returns a list of indices
 % where each MOLD message block starts (in bytes)
@@ -254,23 +247,6 @@ rebuild_index(IoDevice, BinaryBuffer, Position, Indices) ->
 
 map_positions_test() ->
     ?assertEqual(map_positions([1,2,1,2,1,2], 100), {[107,106,104,103,101,100], 109}).
-
-truncate_messages_test() ->
-    Messages = [
-        <<>>,
-        <<"x">>,
-        <<"a","b","c","d","e">>,
-        <<"1","2","3">>,
-        <<"1","2","3","4","5">>,
-        <<"f","o","o","b","a","r","b","a","z">>
-    ],
-    Packet = truncate_messages(Messages, 33),
-    Expected = {4, [<<>>, <<"x">>, <<"a","b","c","d","e">>, <<"1","2","3">>]},
-    ?assertEqual(Packet, Expected).
-
-truncate_messages_empty_test() ->
-    Packet = truncate_messages([], 40),
-    ?assertEqual(Packet, {0, []}).
 
 -endif.
 
