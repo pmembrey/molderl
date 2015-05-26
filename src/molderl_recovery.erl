@@ -89,7 +89,7 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs]);
 
         {error, Reason} ->
-            lager:warning("[molderl] Unable to service recovery request from ~p because ~s. Ignoring.", [IP, Reason])
+            lager:error("[molderl] Unable to service recovery request from ~p because ~s. Ignoring.", [IP, Reason])
     end,
 
     statsderl:timing_now(State#state.statsd_latency_key, TS, 0.01),
