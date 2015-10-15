@@ -128,7 +128,6 @@ handle_info(prod, {Info, State=#state{sequence_number=undefined}}) ->
 
 handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
     % Timer triggered a send, but packets/msgs queue empty
-    lager:debug("[molderl] Sending heartbeat... Stream:~p, SeqNum:~p.~n", [Info#info.stream_name, State#state.sequence_number]),
     send_heartbeat(Info, State#state.sequence_number),
     TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {noreply, {Info, State#state{timer_ref=TRef}}};
@@ -136,7 +135,6 @@ handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
 handle_info(prod, {Info, OldState=#state{packets=Pckts, messages=Msgs}}) ->
     % Timer triggered a send, flush packets/msgs buffer
     State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}},
-    lager:debug("[molderl] Flushing... Stream:~p, NumPackets:~p.~n", [Info#info.stream_name, length(State#state.packets)]),
     case flush(Info, State) of
         {ok, NewState} ->
             {noreply, {Info, NewState}};
@@ -185,7 +183,6 @@ flush(Info, SeqNum, [{_Start, []}|Pckts]) -> % empty packet, ignore and go on
     flush(Info, SeqNum, Pckts);
 
 flush(Info=#info{stream_name=Name, socket=Socket}, SeqNum, [{Start, Msgs}|Pckts]) ->
-    lager:debug("[molderl] Encoding and sending mold packet. Stream:~p, SeqNum:~p, Remaining Packets:~p.~n", [Name, SeqNum, length(Pckts)]),
     {EncodedMsgs, EncodedMsgsSize, NumMsgs} = molderl_utils:encode_messages(Msgs),
     Payload = molderl_utils:gen_messagepacket(Name, SeqNum, NumMsgs, EncodedMsgs),
     case gen_udp:send(Socket, Info#info.destination, Info#info.destination_port, Payload) of
@@ -193,7 +190,6 @@ flush(Info=#info{stream_name=Name, socket=Socket}, SeqNum, [{Start, Msgs}|Pckts]
             molderl_recovery:store(Info#info.recovery_service, EncodedMsgs, EncodedMsgsSize, NumMsgs),
             statsderl:timing_now(Info#info.statsd_latency_key_out, Start, 0.1),
             statsderl:increment(Info#info.statsd_count_key, 1, 0.1),
-            lager:debug("[molderl] Sent mold packet. Stream:~p, SeqNum:~p, NumMsgs:~p.~n", [Name, SeqNum, NumMsgs]),
             flush(Info, SeqNum+NumMsgs, Pckts);
         {error, eagain} -> % retry next cycle
             lager:error("[molderl] Error sending UDP packets: (eagain) resource temporarily unavailable'. Stream:~p. Retrying...~n", [Name]),
