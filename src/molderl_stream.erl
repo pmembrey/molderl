@@ -151,7 +151,7 @@ handle_info({initialize, Arguments}, {Info, State}) ->
     {noreply, {Info#info{recovery_service=RecoveryProcess}, State}};
 
 handle_info(Info, State) ->
-    lager:error("[molderl] molderl_stream:handle_info receives unexpected message. Info:~p, State:~p.~n", [Info, State]),
+    lager:error("[molderl] molderl_stream:handle_info received unexpected message. Info:~p, State:~p.~n", [Info, State]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
