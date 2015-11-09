@@ -148,7 +148,11 @@ handle_info({initialize, Arguments}, {Info, State}) ->
     {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
     RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
     {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
-    {noreply, {Info#info{recovery_service=RecoveryProcess}, State}}.
+    {noreply, {Info#info{recovery_service=RecoveryProcess}, State}};
+
+handle_info(Info, State) ->
+    lager:error("[molderl] molderl_stream:handle_info receives unexpected message. Info:~p, State:~p.~n", [Info, State]),
+    {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
