@@ -105,7 +105,7 @@ handle_cast({send, Msg, StartTime}, {Info, OldState=#state{messages={_,[]}}}) ->
 % third handle if the msg is big enough to promotes the current msgs buffer to a packet
 handle_cast({send, Msg, Start}, {Info, OldState=#state{packets=Pckts, messages=Msgs, buffer_size=Size}})
         when Size+byte_size(Msg)+2 > ?PACKET_SIZE ->
-    State = OldState#state{packets=[Msgs|Pckts], messages={Start, [Msg]}, buffer_size=0},
+    State = OldState#state{packets=[Msgs|Pckts], messages={Start, [Msg]}, buffer_size=byte_size(Msg)+22},
     case flush(Info, State) of
         {ok, NewState} ->
             {noreply, {Info, NewState}};
