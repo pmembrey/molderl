@@ -134,7 +134,7 @@ handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
 
 handle_info(prod, {Info, OldState=#state{packets=Pckts, messages=Msgs}}) ->
     % Timer triggered a send, flush packets/msgs buffer
-    State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}},
+    State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}, buffer_size=0},
     case flush(Info, State) of
         {ok, NewState} ->
             {noreply, {Info, NewState}};
@@ -163,16 +163,16 @@ terminate(Reason, {Info, _State}) ->
 
 -spec flush(#info{}, #state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
 flush(Info, State=#state{sequence_number=undefined}) ->
-    erlang:cancel_timer(State#state.timer_ref),
+    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
     % can't send messages out because we don't know our sequence number yet
     TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {ok, State#state{timer_ref=TRef}};
 
 flush(Info=#info{prod_interval=Interval}, State=#state{packets=Pckts}) ->
-    erlang:cancel_timer(State#state.timer_ref),
+    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
+    TRef = erlang:send_after(Interval, self(), prod),
     case flush(Info, State#state.sequence_number, lists:reverse(Pckts)) of
         {ok, SeqNum, UnsentPckts} ->
-            TRef = erlang:send_after(Interval, self(), prod),
             {ok, State#state{sequence_number=SeqNum, packets=UnsentPckts, timer_ref=TRef}};
         {error, Error} ->
             {error, Error}
