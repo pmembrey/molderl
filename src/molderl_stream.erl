@@ -166,12 +166,14 @@ flush(Info, State=#state{sequence_number=undefined}) ->
     % can't send messages out because we don't know our sequence number yet
     % Asynchronous erlang:cancel_timer/2 is only supported in ERTS 7...
 %    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
+    erlang:cancel_timer(State#state.timer_ref),
     TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {ok, State#state{timer_ref=TRef}};
 
 flush(Info=#info{prod_interval=Interval}, State=#state{packets=Pckts}) ->
     % Asynchronous erlang:cancel_timer/2 is only supported in ERTS 7...
 %    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
+    erlang:cancel_timer(State#state.timer_ref),
     TRef = erlang:send_after(Interval, self(), prod),
     case flush(Info, State#state.sequence_number, lists:reverse(Pckts)) of
         {ok, SeqNum, UnsentPckts} ->
