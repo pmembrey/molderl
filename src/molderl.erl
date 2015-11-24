@@ -59,8 +59,8 @@ handle_call({create_stream, StreamName, Destination, DestinationPort, RecoveryPo
             Timer = proplists:get_value(timer, Options, 50),
             TTL = proplists:get_value(multicast_ttl, Options, 1),
             MaxRecoveryCount = proplists:get_value(max_recovery_count, Options, 2000),
-            Arguments = [{streamname, StreamName}, {destination, Destination},
-                         {destinationport, DestinationPort}, {recoveryport, RecoveryPort},
+            Arguments = [{streamname, StreamName}, {streamprocessname, molderl_utils:gen_processname(stream, StreamName)},
+                         {destination, Destination}, {destinationport, DestinationPort}, {recoveryport, RecoveryPort},
                          {ipaddresstosendfrom, IPAddressToSendFrom}, {filename, FileName},
                          {timer, Timer}, {multicast_ttl, TTL}, {max_recovery_count, MaxRecoveryCount}],
             Spec = ?CHILD(make_ref(), molderl_stream_sup, [Arguments], transient, supervisor),
@@ -73,7 +73,8 @@ handle_call({create_stream, StreamName, Destination, DestinationPort, RecoveryPo
                     {registered_name, ProcessName} = process_info(StreamPid, registered_name),
 
                     % start recovery process
-                    RecoveryArguments = [{mold_stream, ProcessName}|[{packetsize, ?PACKET_SIZE}|Arguments]],
+                    RecoveryProcessName = molderl_utils:gen_processname(recovery, StreamName),
+                    RecoveryArguments = [{mold_stream, ProcessName}|[{recoveryprocessname, RecoveryProcessName}|[{packetsize, ?PACKET_SIZE}|Arguments]]],
                     RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [RecoveryArguments], transient, worker),
                     {ok, _RecoveryProcess} = supervisor:start_child(Pid, RecoverySpec),
 

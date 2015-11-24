@@ -49,6 +49,7 @@ set_sequence_number(ProcessName, SeqNum) ->
 init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {streamprocessname, StreamProcessName} = lists:keyfind(streamprocessname, 1, Arguments),
     {destination, Destination} = lists:keyfind(destination, 1, Arguments),
     {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
     {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
@@ -77,9 +78,8 @@ init(Arguments) ->
                          statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
                          recovery_service = molderl_utils:gen_processname(recovery, StreamName)},
             State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
-            ProcessName = molderl_utils:gen_processname(stream, StreamName),
-            register(ProcessName, self()),
-            lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), ProcessName]),
+            register(StreamProcessName, self()),
+            lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), StreamProcessName]),
             {ok, {Info, State}};
         {error, Reason} ->
             lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",

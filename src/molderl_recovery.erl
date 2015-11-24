@@ -37,6 +37,7 @@ store(ProcessName, Msgs, MsgsSize, NumMsgs) ->
 init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {recoveryprocessname, RecoveryProcessName} = lists:keyfind(recoveryprocessname, 1, Arguments),
     {recoveryport, RecoveryPort} = lists:keyfind(recoveryport, 1, Arguments),
     {packetsize, PacketSize} = lists:keyfind(packetsize, 1, Arguments),
     {filename, FileName} = lists:keyfind(filename, 1, Arguments),
@@ -56,7 +57,6 @@ init(Arguments) ->
                    statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
 
-    RecoveryProcessName = molderl_utils:gen_processname(recovery, StreamName),
     register(RecoveryProcessName, self()),
     lager:info("[molderl] Register molderl_recovery pid[~p] with name[~p]", [self(), RecoveryProcessName]),
     {ok, State}.
