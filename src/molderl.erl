@@ -22,16 +22,16 @@ start_link(SupervisorPID) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, SupervisorPID, []).
 
 -spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number())
-    -> {'ok', pid()} | {'error', atom()}.
+    -> {'ok', atom()} | {'error', atom()}.
 create_stream(StreamName,Destination,DestinationPort,RecoveryPort) ->
     create_stream(StreamName,Destination,DestinationPort,RecoveryPort, []).
 
 -spec create_stream(atom(), inet:ip4_address(), inet:port_number(), inet:port_number(), [{atom(), term()}])
-    -> {'ok', pid()} | {'error', atom()}.
+    -> {'ok', atom()} | {'error', atom()}.
 create_stream(StreamName, Destination, DestinationPort, RecoveryPort, Options) ->
     gen_server:call(?MODULE, {create_stream, StreamName, Destination, DestinationPort, RecoveryPort, Options}).
 
--spec send_message(pid(), binary()) -> 'ok'.
+-spec send_message(atom(), binary()) -> 'ok'.
 send_message(Stream, Message) ->
     gen_server:cast(?MODULE, {send, Stream, Message, os:timestamp()}).
 
@@ -70,7 +70,14 @@ handle_call({create_stream, StreamName, Destination, DestinationPort, RecoveryPo
                     Stream = #stream{destination_addr={Destination,DestinationPort},
                                      recovery_port=RecoveryPort,
                                      filename=FileName},
-                    {reply, {ok, StreamPid}, State#state{streams=[Stream|State#state.streams]}};
+                    {registered_name, ProcessName} = process_info(StreamPid, registered_name),
+
+                    % start recovery process
+                    RecoveryArguments = [{mold_stream, ProcessName}|[{packetsize, ?PACKET_SIZE}|Arguments]],
+                    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [RecoveryArguments], transient, worker),
+                    {ok, _RecoveryProcess} = supervisor:start_child(Pid, RecoverySpec),
+
+                    {reply, {ok, ProcessName}, State#state{streams=[Stream|State#state.streams]}};
                 {error, Error} ->
                     {reply, {error, Error}, State}
             end;

@@ -19,7 +19,7 @@
                socket :: inet:socket(),                  % The socket to send the data on
                destination_port :: inet:port_number(),   % Destination port for the data
                                                          % to be encoded in a MOLD64 packet
-               recovery_service :: pid() ,               % Pid of the recovery service message
+               recovery_service :: atom() ,              % name of the recovery service message
                prod_interval :: pos_integer(),           % Maximum interval at which either partial packets
                                                          % or heartbeats should be sent
                statsd_latency_key_in :: string(),        %
@@ -38,13 +38,13 @@
 start_link(Arguments) ->
     gen_server:start_link(?MODULE, Arguments, []).
 
--spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
-send(Pid, Message, StartTime) ->
-    gen_server:cast(Pid, {send, Message, StartTime}).
+-spec send(atom(), binary(), erlang:timestamp()) -> 'ok'.
+send(ProcessName, Message, StartTime) ->
+    gen_server:cast(ProcessName, {send, Message, StartTime}).
 
--spec set_sequence_number(pid(), pos_integer()) -> 'ok'.
-set_sequence_number(Pid, SeqNum) ->
-    gen_server:cast(Pid, {sequence_number, SeqNum}).
+-spec set_sequence_number(atom(), pos_integer()) -> 'ok'.
+set_sequence_number(ProcessName, SeqNum) ->
+    gen_server:cast(ProcessName, {sequence_number, SeqNum}).
 
 init(Arguments) ->
 
@@ -56,10 +56,6 @@ init(Arguments) ->
     {multicast_ttl, TTL} = lists:keyfind(multicast_ttl, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
-
-    % send yourself a reminder to start recovery process
-    RecoveryArguments = [{mold_stream, self()}|[{packetsize, ?PACKET_SIZE}|Arguments]],
-    self() ! {initialize, RecoveryArguments},
 
     Connection = gen_udp:open(0, [binary,
                                   {broadcast, true},
@@ -78,8 +74,12 @@ init(Arguments) ->
                          prod_interval = ProdInterval,
                          statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                          statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                         statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent"},
+                         statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
+                         recovery_service = molderl_utils:gen_recoveryprocessname(StreamName)},
             State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
+            ProcessName = molderl_utils:gen_streamprocessname(StreamName),
+            register(ProcessName, self()),
+            lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), ProcessName]),
             {ok, {Info, State}};
         {error, Reason} ->
             lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
@@ -105,7 +105,7 @@ handle_cast({send, Msg, StartTime}, {Info, OldState=#state{messages={_,[]}}}) ->
 % third handle if the msg is big enough to promotes the current msgs buffer to a packet
 handle_cast({send, Msg, Start}, {Info, OldState=#state{packets=Pckts, messages=Msgs, buffer_size=Size}})
         when Size+byte_size(Msg)+2 > ?PACKET_SIZE ->
-    State = OldState#state{packets=[Msgs|Pckts], messages={Start, [Msg]}, buffer_size=0},
+    State = OldState#state{packets=[Msgs|Pckts], messages={Start, [Msg]}, buffer_size=byte_size(Msg)+22},
     case flush(Info, State) of
         {ok, NewState} ->
             {noreply, {Info, NewState}};
@@ -128,27 +128,19 @@ handle_info(prod, {Info, State=#state{sequence_number=undefined}}) ->
 
 handle_info(prod, {Info, State=#state{packets=[], messages={_,[]}}}) ->
     % Timer triggered a send, but packets/msgs queue empty
-    lager:debug("[molderl] Sending heartbeat... Stream:~p, SeqNum:~p.~n", [Info#info.stream_name, State#state.sequence_number]),
     send_heartbeat(Info, State#state.sequence_number),
     TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {noreply, {Info, State#state{timer_ref=TRef}}};
 
 handle_info(prod, {Info, OldState=#state{packets=Pckts, messages=Msgs}}) ->
     % Timer triggered a send, flush packets/msgs buffer
-    State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}},
-    lager:debug("[molderl] Flushing... Stream:~p, NumPackets:~p.~n", [Info#info.stream_name, length(State#state.packets)]),
+    State = OldState#state{packets=[Msgs|Pckts], messages={{0,0,0}, []}, buffer_size=0},
     case flush(Info, State) of
         {ok, NewState} ->
             {noreply, {Info, NewState}};
         {error, Reason} ->
             {stop, Reason, {Info, State}}
     end;
-
-handle_info({initialize, Arguments}, {Info, State}) ->
-    {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
-    {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
-    {noreply, {Info#info{recovery_service=RecoveryProcess}, State}};
 
 handle_info(Info, State) ->
     lager:error("[molderl] molderl_stream:handle_info received unexpected message. Info:~p, State:~p.~n", [Info, State]),
@@ -165,16 +157,20 @@ terminate(Reason, {Info, _State}) ->
 
 -spec flush(#info{}, #state{}) -> {'ok', #state{}} | {'error', inet:posix()}.
 flush(Info, State=#state{sequence_number=undefined}) ->
-    erlang:cancel_timer(State#state.timer_ref),
     % can't send messages out because we don't know our sequence number yet
+    % Asynchronous erlang:cancel_timer/2 is only supported in ERTS 7...
+%    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
+    erlang:cancel_timer(State#state.timer_ref),
     TRef = erlang:send_after(Info#info.prod_interval, self(), prod),
     {ok, State#state{timer_ref=TRef}};
 
 flush(Info=#info{prod_interval=Interval}, State=#state{packets=Pckts}) ->
+    % Asynchronous erlang:cancel_timer/2 is only supported in ERTS 7...
+%    erlang:cancel_timer(State#state.timer_ref, [{async, true}]),
     erlang:cancel_timer(State#state.timer_ref),
+    TRef = erlang:send_after(Interval, self(), prod),
     case flush(Info, State#state.sequence_number, lists:reverse(Pckts)) of
         {ok, SeqNum, UnsentPckts} ->
-            TRef = erlang:send_after(Interval, self(), prod),
             {ok, State#state{sequence_number=SeqNum, packets=UnsentPckts, timer_ref=TRef}};
         {error, Error} ->
             {error, Error}
@@ -189,7 +185,6 @@ flush(Info, SeqNum, [{_Start, []}|Pckts]) -> % empty packet, ignore and go on
     flush(Info, SeqNum, Pckts);
 
 flush(Info=#info{stream_name=Name, socket=Socket}, SeqNum, [{Start, Msgs}|Pckts]) ->
-    lager:debug("[molderl] Encoding and sending mold packet. Stream:~p, SeqNum:~p, Remaining Packets:~p.~n", [Name, SeqNum, length(Pckts)]),
     {EncodedMsgs, EncodedMsgsSize, NumMsgs} = molderl_utils:encode_messages(Msgs),
     Payload = molderl_utils:gen_messagepacket(Name, SeqNum, NumMsgs, EncodedMsgs),
     case gen_udp:send(Socket, Info#info.destination, Info#info.destination_port, Payload) of
@@ -197,7 +192,6 @@ flush(Info=#info{stream_name=Name, socket=Socket}, SeqNum, [{Start, Msgs}|Pckts]
             molderl_recovery:store(Info#info.recovery_service, EncodedMsgs, EncodedMsgsSize, NumMsgs),
             statsderl:timing_now(Info#info.statsd_latency_key_out, Start, 0.1),
             statsderl:increment(Info#info.statsd_count_key, 1, 0.1),
-            lager:debug("[molderl] Sent mold packet. Stream:~p, SeqNum:~p, NumMsgs:~p.~n", [Name, SeqNum, NumMsgs]),
             flush(Info, SeqNum+NumMsgs, Pckts);
         {error, eagain} -> % retry next cycle
             lager:error("[molderl] Error sending UDP packets: (eagain) resource temporarily unavailable'. Stream:~p. Retrying...~n", [Name]),
