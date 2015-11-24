@@ -19,7 +19,7 @@
                socket :: inet:socket(),                  % The socket to send the data on
                destination_port :: inet:port_number(),   % Destination port for the data
                                                          % to be encoded in a MOLD64 packet
-               recovery_service :: pid() ,               % Pid of the recovery service message
+               recovery_service :: atom() ,              % name of the recovery service message
                prod_interval :: pos_integer(),           % Maximum interval at which either partial packets
                                                          % or heartbeats should be sent
                statsd_latency_key_in :: string(),        %
@@ -38,17 +38,19 @@
 start_link(Arguments) ->
     gen_server:start_link(?MODULE, Arguments, []).
 
--spec send(pid(), binary(), erlang:timestamp()) -> 'ok'.
-send(Pid, Message, StartTime) ->
-    gen_server:cast(Pid, {send, Message, StartTime}).
+-spec send(atom(), binary(), erlang:timestamp()) -> 'ok'.
+send(ProcessName, Message, StartTime) ->
+    gen_server:cast(ProcessName, {send, Message, StartTime}).
 
--spec set_sequence_number(pid(), pos_integer()) -> 'ok'.
-set_sequence_number(Pid, SeqNum) ->
-    gen_server:cast(Pid, {sequence_number, SeqNum}).
+-spec set_sequence_number(atom(), pos_integer()) -> 'ok'.
+set_sequence_number(ProcessName, SeqNum) ->
+    gen_server:cast(ProcessName, {sequence_number, SeqNum}).
 
 init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {streamprocessname, StreamProcessName} = lists:keyfind(streamprocessname, 1, Arguments),
+    {recoveryprocessname, RecoveryProcessName} = lists:keyfind(recoveryprocessname, 1, Arguments),
     {destination, Destination} = lists:keyfind(destination, 1, Arguments),
     {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
     {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
@@ -56,10 +58,6 @@ init(Arguments) ->
     {multicast_ttl, TTL} = lists:keyfind(multicast_ttl, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
-
-    % send yourself a reminder to start recovery process
-    RecoveryArguments = [{mold_stream, self()}|[{packetsize, ?PACKET_SIZE}|Arguments]],
-    self() ! {initialize, RecoveryArguments},
 
     Connection = gen_udp:open(0, [binary,
                                   {broadcast, true},
@@ -78,8 +76,11 @@ init(Arguments) ->
                          prod_interval = ProdInterval,
                          statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                          statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
-                         statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent"},
+                         statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
+                         recovery_service = RecoveryProcessName},
             State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
+            register(StreamProcessName, self()),
+            lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), StreamProcessName]),
             {ok, {Info, State}};
         {error, Reason} ->
             lager:error("[molderl] Unable to open UDP socket on ~p because '~p'. Aborting.",
@@ -141,12 +142,6 @@ handle_info(prod, {Info, OldState=#state{packets=Pckts, messages=Msgs}}) ->
         {error, Reason} ->
             {stop, Reason, {Info, State}}
     end;
-
-handle_info({initialize, Arguments}, {Info, State}) ->
-    {supervisorpid, SupervisorPID} = lists:keyfind(supervisorpid, 1, Arguments),
-    RecoverySpec = ?CHILD(make_ref(), molderl_recovery, [Arguments], transient, worker),
-    {ok, RecoveryProcess} = supervisor:start_child(SupervisorPID, RecoverySpec),
-    {noreply, {Info#info{recovery_service=RecoveryProcess}, State}};
 
 handle_info(Info, State) ->
     lager:error("[molderl] molderl_stream:handle_info received unexpected message. Info:~p, State:~p.~n", [Info, State]),

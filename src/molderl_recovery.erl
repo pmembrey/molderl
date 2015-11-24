@@ -30,22 +30,23 @@
 start_link(Arguments) ->
     gen_server:start_link(?MODULE, Arguments, []).
 
--spec store(pid(), [binary()], [non_neg_integer()], non_neg_integer()) -> ok.
-store(Pid, Msgs, MsgsSize, NumMsgs) ->
-    gen_server:cast(Pid, {store, Msgs, MsgsSize, NumMsgs}).
+-spec store(atom(), [binary()], [non_neg_integer()], non_neg_integer()) -> ok.
+store(ProcessName, Msgs, MsgsSize, NumMsgs) ->
+    gen_server:cast(ProcessName, {store, Msgs, MsgsSize, NumMsgs}).
 
 init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
+    {recoveryprocessname, RecoveryProcessName} = lists:keyfind(recoveryprocessname, 1, Arguments),
     {recoveryport, RecoveryPort} = lists:keyfind(recoveryport, 1, Arguments),
     {packetsize, PacketSize} = lists:keyfind(packetsize, 1, Arguments),
     {filename, FileName} = lists:keyfind(filename, 1, Arguments),
-    {mold_stream, MoldStreamPid} = lists:keyfind(mold_stream, 1, Arguments),
+    {mold_stream, MoldStreamProcessName} = lists:keyfind(mold_stream, 1, Arguments),
     {max_recovery_count, MaxRecoveryCount} = lists:keyfind(max_recovery_count, 1, Arguments),
 
     process_flag(trap_exit, true), % so that terminate/2 gets called when process exits
 
-    self() ! {initialize, FileName, MoldStreamPid},
+    self() ! {initialize, FileName, MoldStreamProcessName},
 
     {ok, Socket} = gen_udp:open(RecoveryPort, [binary, {active,once}, {reuseaddr, true}]),
 
@@ -56,6 +57,8 @@ init(Arguments) ->
                    statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
 
+    register(RecoveryProcessName, self()),
+    lager:info("[molderl] Register molderl_recovery pid[~p] with name[~p]", [self(), RecoveryProcessName]),
     {ok, State}.
 
 handle_cast({store, Msgs, MsgsSize, NumMsgs}, State) ->
@@ -104,7 +107,7 @@ handle_info({udp, _Client, IP, Port, IllFormedRequest}, State) ->
     ok = inet:setopts(State#state.socket, [{active, once}]),
     {noreply, State};
 
-handle_info({initialize, FileName, MoldStreamPid}, State) ->
+handle_info({initialize, FileName, MoldStreamProcessName}, State) ->
     case file:open(FileName, [read, append, raw, binary, read_ahead]) of
         {ok, IoDevice} ->
             Log = "[molderl] Rebuilding MOLDUDP64 index from disk cache ~p. This may take some time.",
@@ -114,7 +117,7 @@ handle_info({initialize, FileName, MoldStreamPid}, State) ->
                     SeqNum = length(Index),
                     Fmt = "[molderl] Successfully restored ~p MOLD packets from file ~p",
                     lager:info(Fmt, [SeqNum, FileName]),
-                    ok = molderl_stream:set_sequence_number(MoldStreamPid, SeqNum+1),
+                    ok = molderl_stream:set_sequence_number(MoldStreamProcessName, SeqNum+1),
                     NewState = State#state{last_seq_num=SeqNum,
                                            blocks_store=IoDevice,
                                            store_size=FileSize,

@@ -8,7 +8,8 @@
          gen_endofsession/2,
          gen_streamname/1,
          encode_messages/1,
-         gen_messagepacket/4]).
+         gen_messagepacket/4,
+         gen_processname/2]).
 
 -include("molderl.hrl").
 
@@ -44,6 +45,10 @@ gen_streamname(StreamName) when is_list(StreamName), length(StreamName) > 10 ->
     binary_padder(list_to_binary(FirstTen));
 gen_streamname(StreamName) when is_list(StreamName) ->
     binary_padder(list_to_binary(StreamName)).
+
+-spec gen_processname(atom(), atom()) -> atom().
+gen_processname(ProcessType, StreamName) ->
+    list_to_atom(atom_to_list(mold_) ++ atom_to_list(ProcessType) ++ "_" ++ atom_to_list(StreamName)).
 
 %% --------------------------------------------
 %% Takes a binary and pads it out to ten bytes.
@@ -147,5 +152,11 @@ gen_messagepacket_empty_test() ->
     Expected = <<<<"foo">>/binary, 23:64, 0:16>>,
     ?assertEqual(Expected, Observed).
 
+%% -----------------------
+%% Tests for gen_processname
+%% -----------------------
+gen_processname_test() ->
+  ?assert(gen_processname(stream, abcd) == mold_stream_abcd),
+  ?assert(gen_processname(recovery, abcd) == mold_recovery_abcd).
 -endif.
 

@@ -11,7 +11,7 @@
 
 -compile([{parse_transform, lager_transform}]).
 
--record(stream, {pid :: pid(),
+-record(stream, {process_name:: atom(),
                  name :: string(),
                  ip :: inet:ip4_address(),
                  port :: inet:port_number(),
@@ -90,7 +90,7 @@ loop(State=#state{sent=Sent, inflight=Inflight, max_seq_num_rcvd=MaxSeqNumRcvd},
 send(State=#state{stream=Stream, sent=Sent}) ->
     % generate random payload of random size < 10 bytes
     Msg = crypto:strong_rand_bytes(random:uniform(10)),
-    case molderl:send_message(Stream#stream.pid, Msg) of
+    case molderl:send_message(Stream#stream.process_name, Msg) of
         ok ->
             Fmt = "[SUCCESS] Sent packet seq num: ~p, msg: ~p",
             Outcome = io_lib:format(Fmt, [length(Sent)+1, Msg]),
@@ -163,8 +163,8 @@ crash(State) ->
 
 launch_stream(Stream=#stream{port=P, recovery_port=RP, file=F, ip=IP}) ->
     ok = application:start(molderl),
-    {ok, Pid} = molderl:create_stream(foo, ?MCAST_GROUP_IP, P, RP, [{ipaddresstosendfrom,IP},{filename,F}]),
-    Stream#stream{pid=Pid}.
+    {ok, ProcessName} = molderl:create_stream(foo, ?MCAST_GROUP_IP, P, RP, [{ipaddresstosendfrom,IP},{filename,F}]),
+    Stream#stream{process_name=ProcessName}.
 
 clean_up() ->
     application:stop(molderl).
