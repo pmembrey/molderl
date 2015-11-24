@@ -89,7 +89,7 @@ loop(State=#state{sent=Sent, inflight=Inflight, max_seq_num_rcvd=MaxSeqNumRcvd},
 
 send(State=#state{stream=Stream, sent=Sent}) ->
     % generate random payload of random size < 10 bytes
-    Msg = crypto:strong_rand_bytes(random:uniform(10)), 
+    Msg = crypto:strong_rand_bytes(random:uniform(10)),
     case molderl:send_message(Stream#stream.process_name, Msg) of
         ok ->
             Fmt = "[SUCCESS] Sent packet seq num: ~p, msg: ~p",

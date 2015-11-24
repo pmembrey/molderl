@@ -56,7 +56,7 @@ init(Arguments) ->
                    statsd_latency_key = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.latency",
                    statsd_count_key   = "molderl." ++ atom_to_list(StreamName) ++ ".recovery_request.received"},
 
-    RecoveryProcessName = molderl_utils:gen_recoveryprocessname(StreamName),
+    RecoveryProcessName = molderl_utils:gen_processname(recovery, StreamName),
     register(RecoveryProcessName, self()),
     lager:info("[molderl] Register molderl_recovery pid[~p] with name[~p]", [self(), RecoveryProcessName]),
     {ok, State}.

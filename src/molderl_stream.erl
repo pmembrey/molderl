@@ -75,9 +75,9 @@ init(Arguments) ->
                          statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                          statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
                          statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
-                         recovery_service = molderl_utils:gen_recoveryprocessname(StreamName)},
+                         recovery_service = molderl_utils:gen_processname(recovery, StreamName)},
             State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
-            ProcessName = molderl_utils:gen_streamprocessname(StreamName),
+            ProcessName = molderl_utils:gen_processname(stream, StreamName),
             register(ProcessName, self()),
             lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), ProcessName]),
             {ok, {Info, State}};
