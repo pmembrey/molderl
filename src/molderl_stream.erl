@@ -50,6 +50,7 @@ init(Arguments) ->
 
     {streamname, StreamName} = lists:keyfind(streamname, 1, Arguments),
     {streamprocessname, StreamProcessName} = lists:keyfind(streamprocessname, 1, Arguments),
+    {recoveryprocessname, RecoveryProcessName} = lists:keyfind(recoveryprocessname, 1, Arguments),
     {destination, Destination} = lists:keyfind(destination, 1, Arguments),
     {destinationport, DestinationPort} = lists:keyfind(destinationport, 1, Arguments),
     {ipaddresstosendfrom, IPAddressToSendFrom} = lists:keyfind(ipaddresstosendfrom, 1, Arguments),
@@ -76,7 +77,7 @@ init(Arguments) ->
                          statsd_latency_key_in = "molderl." ++ atom_to_list(StreamName) ++ ".time_in",
                          statsd_latency_key_out = "molderl." ++ atom_to_list(StreamName) ++ ".time_out",
                          statsd_count_key = "molderl." ++ atom_to_list(StreamName) ++ ".packets_sent",
-                         recovery_service = molderl_utils:gen_processname(recovery, StreamName)},
+                         recovery_service = RecoveryProcessName},
             State = #state{timer_ref = erlang:send_after(ProdInterval, self(), prod)},
             register(StreamProcessName, self()),
             lager:info("[molderl] Register molderl_stream pid[~p] with name[~p]", [self(), StreamProcessName]),
