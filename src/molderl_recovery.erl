@@ -91,6 +91,9 @@ handle_info({udp, _Client, IP, Port, <<SessionName:10/binary,SequenceNumber:64/b
             ok = gen_udp:send(State#state.socket, IP, Port, Payload),
             lager:debug("[molderl] Replied recovery request from ~p - reply contains ~p messages", [IP, NumMsgs]);
 
+        {warning, Reason} ->
+            lager:warning("[molderl] Unable to service recovery request from ~p because ~s. Ignoring.", [IP, Reason])
+
         {error, Reason} ->
             lager:error("[molderl] Unable to service recovery request from ~p because ~s. Ignoring.", [IP, Reason])
     end,
@@ -151,10 +154,10 @@ terminate(Reason, State) ->
 %% request count is smaller than the maximum request count.
 %% ------------------------------------------------------------
 -spec validate_request(integer(), integer(), pos_integer(), pos_integer()) ->
-    'ok' | {'error', string()}.
+    'ok' | {'warning', string()} | {'error', string()}.
 validate_request(_SeqNum, Count, _MaxSeqNum, MaxCount) when Count>MaxCount ->
     Fmt = "requested count ~p is bigger than configured maximum request count ~p",
-    {error, io_lib:format(Fmt, [Count, MaxCount])};
+    {warning, io_lib:format(Fmt, [Count, MaxCount])};
 validate_request(SeqNum, _Count, _MaxSeqNum, _MaxCount) when SeqNum =< 0 ->
     Fmt = "requested sequence number ~p is smaller or equal to zero",
     {error, io_lib:format(Fmt, [SeqNum])};
